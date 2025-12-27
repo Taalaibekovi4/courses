@@ -1,0 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Минимальная база */
+:root {
+  --radius: 10px;
+}
