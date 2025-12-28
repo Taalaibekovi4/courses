@@ -16,7 +16,7 @@ const norm = (s) => String(s ?? "").trim();
 const asArr = (v) => (Array.isArray(v) ? v : []);
 
 export function DataProvider({ children }) {
-  const [users] = useState(mockUsers);
+  const [users, setUsers] = useState(mockUsers);
   const [categories] = useState(mockCategories);
   const [teachers] = useState(mockTeachers);
   const [courses, setCourses] = useState(mockCourses);
@@ -30,13 +30,13 @@ export function DataProvider({ children }) {
     const course = courses.find((c) => c.id === courseId);
     if (!course) return undefined;
 
-    const category = categories.find((cat) => cat.id === course.categoryId);
-    const teacher = teachers.find((t) => t.id === course.teacherId);
+    const category = categories.find((cat) => cat.id === course.categoryId) || null;
+    const teacher = teachers.find((t) => t.id === course.teacherId) || null;
+
     const courseLessons = lessons.filter((l) => l.courseId === courseId);
     const courseTariffs = tariffs.filter((t) => t.courseId === courseId);
 
-    if (!category || !teacher) return undefined;
-
+    // ✅ Раньше было: если нет category/teacher -> undefined (ломает новые курсы)
     return {
       ...course,
       category,
@@ -54,11 +54,8 @@ export function DataProvider({ children }) {
   };
 
   const getTariffsByCourse = (courseId) => tariffs.filter((t) => t.courseId === courseId);
-
   const getUserTokens = (userId) => tokens.filter((t) => t.userId === userId && t.isActive);
-
   const getUserHomeworks = (userId) => homeworks.filter((hw) => hw.userId === userId);
-
   const findUserById = (id) => users.find((u) => u.id === id);
 
   // ===== actions =====
@@ -66,7 +63,9 @@ export function DataProvider({ children }) {
     const token = tokens.find((t) => t.token === tokenStr && !t.isActive);
     if (!token) return false;
 
-    setTokens(tokens.map((t) => (t.token === tokenStr ? { ...t, userId, isActive: true } : t)));
+    setTokens((prev) =>
+      prev.map((t) => (t.token === tokenStr ? { ...t, userId, isActive: true } : t))
+    );
     return true;
   };
 
@@ -98,7 +97,7 @@ export function DataProvider({ children }) {
       reviewedAt: null,
       teacherComment: "",
       isArchived: false, // архив преподавателя
-      isStudentArchived: false, // ✅ архив студента
+      isStudentArchived: false, // архив студента
     };
 
     setHomeworks((prev) => [newHomework, ...prev]);
@@ -119,7 +118,6 @@ export function DataProvider({ children }) {
     );
   };
 
-  // Архив преподавателя (у тебя уже было: только accepted)
   const archiveHomework = (homeworkId) => {
     setHomeworks((prev) =>
       prev.map((hw) => {
@@ -136,14 +134,10 @@ export function DataProvider({ children }) {
     );
   };
 
-  // ✅ студент: обновить ДЗ (редактирование/повторная отправка)
   const updateHomework = (homeworkId, patch) => {
-    setHomeworks((prev) =>
-      prev.map((hw) => (hw.id === homeworkId ? { ...hw, ...patch } : hw))
-    );
+    setHomeworks((prev) => prev.map((hw) => (hw.id === homeworkId ? { ...hw, ...patch } : hw)));
   };
 
-  // ✅ студент: архивировать “Принято”
   const archiveStudentHomework = (homeworkId) => {
     setHomeworks((prev) =>
       prev.map((hw) => {
@@ -157,6 +151,45 @@ export function DataProvider({ children }) {
   const unarchiveStudentHomework = (homeworkId) => {
     setHomeworks((prev) =>
       prev.map((hw) => (hw.id === homeworkId ? { ...hw, isStudentArchived: false } : hw))
+    );
+  };
+
+  // ===== courses CRUD (Teacher) =====
+  const addCourse = (course) => {
+    const title = norm(course?.title);
+    const teacherId = norm(course?.teacherId);
+    if (!title || !teacherId) return null;
+
+    const newCourse = {
+      id: course?.id ? String(course.id) : `c_${Date.now()}`,
+      title,
+      description: norm(course?.description),
+      categoryId: course?.categoryId ?? null,
+      teacherId,
+      slug: norm(course?.slug),
+    };
+
+    setCourses((prev) => [newCourse, ...prev]);
+    return newCourse.id;
+  };
+
+  const updateCourse = (courseId, patch) => {
+    const cid = String(courseId || "");
+    if (!cid) return;
+
+    const p = patch || {};
+    setCourses((prev) =>
+      prev.map((c) =>
+        c.id === cid
+          ? {
+              ...c,
+              ...(p.title !== undefined ? { title: norm(p.title) } : {}),
+              ...(p.description !== undefined ? { description: norm(p.description) } : {}),
+              ...(p.categoryId !== undefined ? { categoryId: p.categoryId || null } : {}),
+              ...(p.slug !== undefined ? { slug: norm(p.slug) } : {}),
+            }
+          : c
+      )
     );
   };
 
@@ -181,9 +214,7 @@ export function DataProvider({ children }) {
   };
 
   const updateLesson = (lessonId, patch) => {
-    setLessons((prev) =>
-      prev.map((l) => (l.id === lessonId ? { ...l, ...patch } : l))
-    );
+    setLessons((prev) => prev.map((l) => (l.id === lessonId ? { ...l, ...patch } : l)));
   };
 
   const value = useMemo(
@@ -209,12 +240,15 @@ export function DataProvider({ children }) {
       archiveHomework,
       unarchiveHomework,
 
-      updateHomework, // ✅
-      archiveStudentHomework, // ✅
-      unarchiveStudentHomework, // ✅
+      updateHomework,
+      archiveStudentHomework,
+      unarchiveStudentHomework,
 
       activateToken,
       markLessonAsOpened,
+
+      addCourse,       // ✅
+      updateCourse,    // ✅
 
       addLesson,
       updateLesson,

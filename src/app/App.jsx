@@ -26,6 +26,7 @@ import { StudentCoursePage } from "../pages/StudentCoursePage.jsx";
 import { TeacherDashboard } from "../pages/TeacherDashboard.jsx";
 
 import { Toaster } from "sonner";
+import RegisterPage from "../pages/RegisterPage.jsx";
 
 function ScrollToTop() {
   const { pathname, search, hash } = useLocation();
@@ -86,6 +87,7 @@ function AppRoutes() {
 
           {/* ✅ контейнерные страницы */}
           <Route element={<ContainerLayout />}>
+          <Route path="/register" element={<RegisterPage />} />
             <Route path="/login" element={<LoginPage />} />
 
             <Route

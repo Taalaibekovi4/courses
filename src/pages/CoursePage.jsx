@@ -419,9 +419,6 @@ ${list}`;
             <Card className="border-0 shadow-sm">
               <CardHeader className="flex flex-row items-center justify-between gap-4">
                 <CardTitle>Программа курса</CardTitle>
-                <div className="text-sm text-gray-600">
-                  Выбрано: <span className="font-semibold">{selectedLessons.length}</span>
-                </div>
               </CardHeader>
 
               <CardContent>
@@ -563,7 +560,7 @@ ${list}`;
                     </div>
                   ) : (
                     <p className="mt-2 text-sm text-gray-600">
-                      Выбери уроки слева — и купи их одним сообщением в WhatsApp.
+                      Выбери уроки слева — и купи их одним сообщением.
                     </p>
                   )}
 

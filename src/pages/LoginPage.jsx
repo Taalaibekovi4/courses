@@ -1,10 +1,16 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.jsx";
 
 import { Button } from "../components/ui/button.jsx";
 import { Input } from "../components/ui/input.jsx";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/card.jsx";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+} from "../components/ui/card.jsx";
 import { Alert, AlertDescription } from "../components/ui/alert.jsx";
 
 export function LoginPage() {
@@ -42,16 +48,38 @@ export function LoginPage() {
 
             <div className="space-y-2">
               <label className="text-sm">Email</label>
-              <Input value={email} onChange={(e) => setEmail(e.target.value)} required />
+              <Input
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                type="email"
+                placeholder="name@example.com"
+                required
+              />
             </div>
 
             <div className="space-y-2">
               <label className="text-sm">Пароль</label>
-              <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <Input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Введите пароль"
+                required
+              />
             </div>
 
-            <Button type="submit" className="w-full">Войти</Button>
+            <Button type="submit" className="w-full">
+              Войти
+            </Button>
           </form>
+
+          {/* ✅ Ссылка на регистрацию */}
+          <div className="mt-5 text-sm text-gray-600 text-center">
+            Нет аккаунта?{" "}
+            <Link to="/register" className="text-blue-700 hover:underline font-medium">
+              Регистрация
+            </Link>
+          </div>
 
           <div className="mt-6 p-4 bg-gray-100 rounded-lg">
             <p className="text-sm mb-2">Тестовые аккаунты:</p>
@@ -66,3 +94,5 @@ export function LoginPage() {
     </div>
   );
 }
+
+export default LoginPage;
