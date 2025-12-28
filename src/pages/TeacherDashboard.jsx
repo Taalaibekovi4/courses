@@ -1,8 +1,18 @@
-// src/pages/TeacherDashboard.jsx
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useCallback } from "react";
 import { toast } from "sonner";
 import YouTube from "react-youtube";
-import { BookOpen, CheckCircle, Clock, XCircle, Archive, ChevronDown, Pencil } from "lucide-react";
+import {
+  BookOpen,
+  CheckCircle,
+  Clock,
+  XCircle,
+  Archive,
+  ChevronDown,
+  Pencil,
+  Undo2,
+  Link as LinkIcon,
+  Paperclip,
+} from "lucide-react";
 
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { useData } from "../contexts/DataContext.jsx";
@@ -19,16 +29,12 @@ const norm = (s) => String(s ?? "").trim();
 function getYouTubeId(raw) {
   const v = norm(raw);
   if (!v) return "";
-  // ID (пример: dQw4w9WgXcQ)
   if (/^[a-zA-Z0-9_-]{6,}$/.test(v) && !v.includes("http")) return v;
 
-  // ссылки
   const m1 = v.match(/(?:youtube\.com\/watch\?v=)([^&]+)/);
   if (m1?.[1]) return m1[1];
   const m2 = v.match(/(?:youtu\.be\/)([^?&]+)/);
   if (m2?.[1]) return m2[1];
-
-  // если вставили мусор — попробуем вытащить последний похожий кусок
   const m3 = v.match(/([a-zA-Z0-9_-]{6,})/);
   return m3?.[1] || "";
 }
@@ -56,12 +62,7 @@ function AttachmentsView({ attachments }) {
           return (
             <div key={key} className="text-sm">
               {url ? (
-                <a
-                  href={url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-blue-600 hover:underline break-all"
-                >
+                <a href={url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline break-all">
                   {isLink ? "🔗 " : "📎 "}
                   {name}
                 </a>
@@ -72,6 +73,100 @@ function AttachmentsView({ attachments }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function LessonHomeworkMaterials({ value, onChange }) {
+  const list = Array.isArray(value) ? value : [];
+
+  const [linkName, setLinkName] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
+
+  const addLink = () => {
+    const name = norm(linkName) || "Ссылка";
+    const url = norm(linkUrl);
+    if (!url) {
+      toast.error("Вставьте ссылку");
+      return;
+    }
+    onChange([...list, { type: "link", name, url }]);
+    setLinkName("");
+    setLinkUrl("");
+  };
+
+  const addFile = (file) => {
+    if (!file) return;
+    // демо: сохраняем имя + blob url (в реальном проекте — загрузка на сервер)
+    const url = URL.createObjectURL(file);
+    onChange([...list, { type: "file", name: file.name, url }]);
+  };
+
+  const removeItem = (idx) => {
+    const item = list[idx];
+    if (item?.url?.startsWith("blob:")) {
+      try {
+        URL.revokeObjectURL(item.url);
+      } catch (_) {}
+    }
+    onChange(list.filter((_, i) => i !== idx));
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="text-sm font-semibold">Материалы к ДЗ</div>
+
+      <div className="grid md:grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <label className="text-xs text-gray-600">Название ссылки</label>
+          <Input value={linkName} onChange={(e) => setLinkName(e.target.value)} placeholder="Например: Макет Figma" />
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs text-gray-600">Ссылка</label>
+          <Input value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} placeholder="https://..." />
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <Button type="button" variant="outline" onClick={addLink}>
+          <LinkIcon className="w-4 h-4 mr-2" />
+          Добавить ссылку
+        </Button>
+
+        <label className="inline-flex items-center gap-2 cursor-pointer">
+          <input
+            type="file"
+            className="hidden"
+            onChange={(e) => addFile(e.target.files?.[0] || null)}
+          />
+          <span className="inline-flex items-center px-3 py-2 border rounded-md text-sm hover:bg-gray-50">
+            <Paperclip className="w-4 h-4 mr-2" />
+            Прикрепить файл
+          </span>
+        </label>
+      </div>
+
+      {!!list.length && (
+        <div className="border rounded-lg p-3 bg-white space-y-2">
+          {list.map((a, idx) => (
+            <div key={`${a.type}_${idx}`} className="flex items-start justify-between gap-3">
+              <div className="text-sm break-all">
+                {a.type === "link" ? "🔗 " : "📎 "}
+                {a.url ? (
+                  <a href={a.url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                    {a.name}
+                  </a>
+                ) : (
+                  <span>{a.name}</span>
+                )}
+              </div>
+              <Button variant="outline" size="sm" onClick={() => removeItem(idx)}>
+                Удалить
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -87,55 +182,69 @@ export function TeacherDashboard() {
     getLessonsByCourse,
     reviewHomework,
     archiveHomework,
+    unarchiveHomework,
     addLesson,
     updateLesson,
   } = useData();
 
-  const [comments, setComments] = useState({}); // { [homeworkId]: "text" }
-  const [expandedStudents, setExpandedStudents] = useState({}); // { [studentId]: bool }
-  const [expandedArchiveStudents, setExpandedArchiveStudents] = useState({}); // { [studentId]: bool }
+  const [tab, setTab] = useState("homework");
+  const [homeworkFilter, setHomeworkFilter] = useState("all"); // all | submitted | accepted
 
-  // course expand for edit
-  const [expandedCourse, setExpandedCourse] = useState(null); // courseId
+  const [comments, setComments] = useState({});
+  const [expandedStudents, setExpandedStudents] = useState({});
+  const [expandedArchiveStudents, setExpandedArchiveStudents] = useState({});
+
+  const [expandedCourse, setExpandedCourse] = useState(null);
   const [editLessonId, setEditLessonId] = useState(null);
-  const [editForm, setEditForm] = useState({ title: "", description: "", videoUrl: "", homeworkDescription: "" });
+  const [editForm, setEditForm] = useState({
+    title: "",
+    description: "",
+    videoUrl: "",
+    homeworkDescription: "",
+    homeworkAttachments: [],
+  });
 
-  // add lesson form
   const [addForm, setAddForm] = useState({
     courseId: "",
     title: "",
     description: "",
     videoUrl: "",
+    selectedVideoId: "",
     homeworkDescription: "",
+    homeworkAttachments: [],
   });
 
   if (!user) return null;
 
-  const teacherCourses = useMemo(() => {
-    return courses.filter((c) => c.teacherId === user.id);
-  }, [courses, user.id]);
-
+  const teacherCourses = useMemo(() => courses.filter((c) => c.teacherId === user.id), [courses, user.id]);
   const teacherCourseIds = useMemo(() => new Set(teacherCourses.map((c) => c.id)), [teacherCourses]);
 
-  const teacherHomeworksActive = useMemo(() => {
-    return homeworks.filter((hw) => teacherCourseIds.has(hw.courseId) && !hw.isArchived);
-  }, [homeworks, teacherCourseIds]);
+  const teacherHomeworksActive = useMemo(
+    () => homeworks.filter((hw) => teacherCourseIds.has(hw.courseId) && !hw.isArchived),
+    [homeworks, teacherCourseIds]
+  );
 
-  const teacherHomeworksArchived = useMemo(() => {
-    return homeworks.filter((hw) => teacherCourseIds.has(hw.courseId) && hw.isArchived);
-  }, [homeworks, teacherCourseIds]);
+  const teacherHomeworksArchived = useMemo(
+    () => homeworks.filter((hw) => teacherCourseIds.has(hw.courseId) && hw.isArchived),
+    [homeworks, teacherCourseIds]
+  );
 
   const pendingCount = teacherHomeworksActive.filter((hw) => hw.status === "submitted").length;
   const acceptedCount = teacherHomeworksActive.filter((hw) => hw.status === "accepted").length;
 
+  const filteredActive = useMemo(() => {
+    if (homeworkFilter === "submitted") return teacherHomeworksActive.filter((hw) => hw.status === "submitted");
+    if (homeworkFilter === "accepted") return teacherHomeworksActive.filter((hw) => hw.status === "accepted");
+    return teacherHomeworksActive;
+  }, [teacherHomeworksActive, homeworkFilter]);
+
   const groupedByStudent = useMemo(() => {
     const map = new Map();
-    for (const hw of teacherHomeworksActive) {
+    for (const hw of filteredActive) {
       const sid = hw.userId;
       if (!map.has(sid)) map.set(sid, []);
       map.get(sid).push(hw);
     }
-    // сортировка: сначала submitted
     for (const [sid, arr] of map.entries()) {
       arr.sort((a, b) => {
         const pa = a.status === "submitted" ? 0 : 1;
@@ -145,7 +254,7 @@ export function TeacherDashboard() {
       map.set(sid, arr);
     }
     return map;
-  }, [teacherHomeworksActive]);
+  }, [filteredActive]);
 
   const groupedArchiveByStudent = useMemo(() => {
     const map = new Map();
@@ -160,6 +269,21 @@ export function TeacherDashboard() {
     }
     return map;
   }, [teacherHomeworksArchived]);
+
+  const applyHomeworkFilter = useCallback(
+    (filter) => {
+      setTab("homework");
+      setHomeworkFilter(filter);
+
+      // раскрываем студентов, у которых есть задачи в фильтре
+      const open = {};
+      Array.from(groupedByStudent.keys()).forEach((sid) => {
+        open[sid] = true;
+      });
+      setExpandedStudents(open);
+    },
+    [groupedByStudent]
+  );
 
   function setCommentFor(id, text) {
     setComments((prev) => ({ ...prev, [id]: text }));
@@ -176,9 +300,18 @@ export function TeacherDashboard() {
     setComments((prev) => ({ ...prev, [homeworkId]: "" }));
   }
 
-  function handleArchive(homeworkId) {
-    archiveHomework(homeworkId);
+  function handleArchive(hw) {
+    if (hw.status !== "accepted") {
+      toast.error("В архив можно отправить только статус «Принято»");
+      return;
+    }
+    archiveHomework(hw.id);
     toast.success("Отправлено в архив");
+  }
+
+  function handleUnarchive(hwId) {
+    unarchiveHomework(hwId);
+    toast.success("Разархивировано");
   }
 
   function toggleStudent(studentId) {
@@ -196,16 +329,35 @@ export function TeacherDashboard() {
       description: lesson.description || "",
       videoUrl: lesson.videoUrl || "",
       homeworkDescription: lesson.homeworkDescription || "",
+      homeworkAttachments: Array.isArray(lesson.homeworkAttachments) ? lesson.homeworkAttachments : [],
     });
+  }
+
+  function chooseEditVideo() {
+    const vid = getYouTubeId(editForm.videoUrl);
+    if (!vid) {
+      toast.error("Укажите YouTube ссылку или ID");
+      return;
+    }
+    setEditForm((p) => ({ ...p, videoUrl: vid }));
+    toast.success("Видео выбрано");
   }
 
   function saveEditLesson() {
     if (!editLessonId) return;
+
+    const vid = getYouTubeId(editForm.videoUrl);
+    if (!vid) {
+      toast.error("Укажите корректную YouTube ссылку или ID");
+      return;
+    }
+
     updateLesson(editLessonId, {
       title: norm(editForm.title),
       description: norm(editForm.description),
-      videoUrl: norm(editForm.videoUrl),
+      videoUrl: vid, // ✅ всегда ID
       homeworkDescription: norm(editForm.homeworkDescription),
+      homeworkAttachments: Array.isArray(editForm.homeworkAttachments) ? editForm.homeworkAttachments : [],
     });
     toast.success("Урок обновлен");
     setEditLessonId(null);
@@ -213,7 +365,23 @@ export function TeacherDashboard() {
 
   function cancelEdit() {
     setEditLessonId(null);
-    setEditForm({ title: "", description: "", videoUrl: "", homeworkDescription: "" });
+    setEditForm({
+      title: "",
+      description: "",
+      videoUrl: "",
+      homeworkDescription: "",
+      homeworkAttachments: [],
+    });
+  }
+
+  function chooseAddVideo() {
+    const vid = getYouTubeId(addForm.videoUrl);
+    if (!vid) {
+      toast.error("Укажите YouTube ссылку или ID");
+      return;
+    }
+    setAddForm((p) => ({ ...p, selectedVideoId: vid, videoUrl: vid }));
+    toast.success("Видео выбрано");
   }
 
   function handleAddLesson() {
@@ -222,9 +390,10 @@ export function TeacherDashboard() {
       toast.error("Выберите курс");
       return;
     }
+
     const vid = getYouTubeId(addForm.videoUrl);
     if (!vid) {
-      toast.error("Укажите YouTube ссылку или ID");
+      toast.error("Сначала выберите видео (YouTube ссылка или ID)");
       return;
     }
 
@@ -232,20 +401,28 @@ export function TeacherDashboard() {
       courseId: cid,
       title: addForm.title,
       description: addForm.description,
-      videoUrl: vid, // ✅ сохраняем уже чистый ID
+      videoUrl: vid,
       homeworkDescription: addForm.homeworkDescription,
+      homeworkAttachments: Array.isArray(addForm.homeworkAttachments) ? addForm.homeworkAttachments : [],
     });
 
     toast.success("Урок добавлен");
-    setAddForm({ courseId: cid, title: "", description: "", videoUrl: "", homeworkDescription: "" });
+    setAddForm({
+      courseId: cid,
+      title: "",
+      description: "",
+      videoUrl: "",
+      selectedVideoId: "",
+      homeworkDescription: "",
+      homeworkAttachments: [],
+    });
     setExpandedCourse(cid);
   }
 
-  // small video opts (для кабинета учителя)
   const smallOpts = {
     width: "100%",
     height: "140",
-    playerVars: { autoplay: 0 },
+    playerVars: { autoplay: 0, controls: 1 },
   };
 
   return (
@@ -253,53 +430,78 @@ export function TeacherDashboard() {
       <div className="container mx-auto px-4 py-8">
         <h1 className="text-3xl mb-8">Кабинет преподавателя</h1>
 
-        {/* Stats */}
+        {/* Stats (кнопки-фильтры) */}
         <div className="grid md:grid-cols-3 gap-6 mb-8">
           <Card>
-            <CardContent className="p-6 flex items-center gap-3">
-              <BookOpen className="w-10 h-10 text-blue-600" />
-              <div>
-                <div className="text-2xl font-bold">{teacherCourses.length}</div>
-                <div className="text-sm text-gray-600">Мои курсы</div>
+            <CardContent className="p-6">
+              <div className="flex items-center gap-3">
+                <BookOpen className="w-10 h-10 text-blue-600" />
+                <div>
+                  <div className="text-2xl font-bold">{teacherCourses.length}</div>
+                  <div className="text-sm text-gray-600">Мои курсы</div>
+                </div>
               </div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="p-6 flex items-center gap-3">
-              <Clock className="w-10 h-10 text-orange-600" />
-              <div>
-                <div className="text-2xl font-bold">{pendingCount}</div>
-                <div className="text-sm text-gray-600">На проверке</div>
-              </div>
+            <CardContent className="p-0">
+              <button
+                className="w-full p-6 flex items-center gap-3 text-left hover:bg-gray-50 transition"
+                onClick={() => applyHomeworkFilter("submitted")}
+                type="button"
+              >
+                <Clock className="w-10 h-10 text-orange-600" />
+                <div>
+                  <div className="text-2xl font-bold">{pendingCount}</div>
+                  <div className="text-sm text-gray-600">На проверке</div>
+                </div>
+              </button>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="p-6 flex items-center gap-3">
-              <CheckCircle className="w-10 h-10 text-green-600" />
-              <div>
-                <div className="text-2xl font-bold">{acceptedCount}</div>
-                <div className="text-sm text-gray-600">Принято</div>
-              </div>
+            <CardContent className="p-0">
+              <button
+                className="w-full p-6 flex items-center gap-3 text-left hover:bg-gray-50 transition"
+                onClick={() => applyHomeworkFilter("accepted")}
+                type="button"
+              >
+                <CheckCircle className="w-10 h-10 text-green-600" />
+                <div>
+                  <div className="text-2xl font-bold">{acceptedCount}</div>
+                  <div className="text-sm text-gray-600">Принято</div>
+                </div>
+              </button>
             </CardContent>
           </Card>
         </div>
 
-        <Tabs defaultValue="homework" className="space-y-6">
+        <Tabs value={tab} onValueChange={setTab} className="space-y-6">
           <TabsList>
-            <TabsTrigger value="homework">Домашние задания</TabsTrigger>
+            <TabsTrigger
+              value="homework"
+              onClick={() => setHomeworkFilter("all")}
+            >
+              Домашние задания
+            </TabsTrigger>
             <TabsTrigger value="courses">Мои курсы</TabsTrigger>
             <TabsTrigger value="add">Добавить урок</TabsTrigger>
             <TabsTrigger value="archive">Архив</TabsTrigger>
           </TabsList>
 
-          {/* Домашки — группируем по студенту (1 студент = 1 див/карточка) */}
+          {/* Домашки — группируем по студенту */}
           <TabsContent value="homework" className="space-y-4">
-            {teacherHomeworksActive.length === 0 ? (
+            {filteredActive.length === 0 ? (
               <Card>
                 <CardContent className="py-12 text-center">
-                  <p className="text-gray-600">Пока нет домашних заданий</p>
+                  <p className="text-gray-600">
+                    {homeworkFilter === "submitted"
+                      ? "Нет домашних заданий на проверке"
+                      : homeworkFilter === "accepted"
+                      ? "Нет принятых домашних заданий"
+                      : "Пока нет домашних заданий"}
+                  </p>
                 </CardContent>
               </Card>
             ) : (
@@ -314,6 +516,7 @@ export function TeacherDashboard() {
                       <button
                         onClick={() => toggleStudent(studentId)}
                         className="w-full flex items-center justify-between"
+                        type="button"
                       >
                         <div className="text-left">
                           <div className="font-semibold">
@@ -333,7 +536,6 @@ export function TeacherDashboard() {
                             const courseDetails = getCourseWithDetails(hw.courseId);
                             const lesson = lessons.find((l) => l.id === hw.lessonId);
                             const comment = comments[hw.id] || "";
-                            const canArchive = hw.status === "accepted" || hw.status === "rejected";
 
                             return (
                               <div key={hw.id} className="border rounded-lg p-4 bg-white">
@@ -343,7 +545,8 @@ export function TeacherDashboard() {
                                       {courseDetails?.title || "Курс"} • {lesson?.title || `Урок ${hw.lessonId}`}
                                     </div>
                                     <div className="text-xs text-gray-500 mt-1">
-                                      Отправлено: {hw.submittedAt ? new Date(hw.submittedAt).toLocaleDateString() : "—"}
+                                      Отправлено:{" "}
+                                      {hw.submittedAt ? new Date(hw.submittedAt).toLocaleDateString() : "—"}
                                     </div>
                                   </div>
                                   <StatusBadge status={hw.status} />
@@ -392,9 +595,10 @@ export function TeacherDashboard() {
                                   </div>
                                 ) : null}
 
-                                {canArchive && (
+                                {/* ✅ В архив только если Принято */}
+                                {hw.status === "accepted" && (
                                   <div className="mt-4">
-                                    <Button variant="outline" onClick={() => handleArchive(hw.id)}>
+                                    <Button variant="outline" onClick={() => handleArchive(hw)}>
                                       <Archive className="w-4 h-4 mr-2" />
                                       В архив
                                     </Button>
@@ -412,7 +616,7 @@ export function TeacherDashboard() {
             )}
           </TabsContent>
 
-          {/* Мои курсы — 2 курса, внутри каждого 3 видео, можно редактировать */}
+          {/* Мои курсы */}
           <TabsContent value="courses" className="space-y-4">
             {teacherCourses.map((course) => {
               const details = getCourseWithDetails(course.id);
@@ -425,6 +629,7 @@ export function TeacherDashboard() {
                     <button
                       onClick={() => setExpandedCourse(isOpen ? null : course.id)}
                       className="w-full flex items-start justify-between gap-4 text-left"
+                      type="button"
                     >
                       <div>
                         <CardTitle>{course.title}</CardTitle>
@@ -448,14 +653,15 @@ export function TeacherDashboard() {
                           return (
                             <div key={l.id} className="border rounded-lg p-4 bg-white">
                               <div className="flex items-start justify-between gap-3">
-                                <div className="font-semibold">{l.order}. {l.title}</div>
+                                <div className="font-semibold">
+                                  {l.order}. {l.title}
+                                </div>
                                 <Button variant="outline" size="sm" onClick={() => openEditLesson(l)}>
                                   <Pencil className="w-4 h-4 mr-2" />
                                   Редактировать
                                 </Button>
                               </div>
 
-                              {/* маленькое видео */}
                               <div className="mt-3 rounded overflow-hidden bg-black">
                                 {previewId ? (
                                   <YouTube videoId={previewId} opts={smallOpts} />
@@ -487,15 +693,21 @@ export function TeacherDashboard() {
                                     />
                                   </div>
 
-                                  <div className="space-y-1">
+                                  {/* ✅ выбрать видео */}
+                                  <div className="space-y-2">
                                     <label className="text-sm">YouTube ссылка или ID</label>
-                                    <Input
-                                      placeholder="например: https://youtu.be/... или dQw4w9WgXcQ"
-                                      value={editForm.videoUrl}
-                                      onChange={(e) => setEditForm((p) => ({ ...p, videoUrl: e.target.value }))}
-                                    />
+                                    <div className="flex gap-2">
+                                      <Input
+                                        placeholder="https://youtube.com/watch?v=... или ID"
+                                        value={editForm.videoUrl}
+                                        onChange={(e) => setEditForm((p) => ({ ...p, videoUrl: e.target.value }))}
+                                      />
+                                      <Button type="button" variant="outline" onClick={chooseEditVideo}>
+                                        Выбрать
+                                      </Button>
+                                    </div>
                                     <p className="text-xs text-gray-500">
-                                      ID будет вытащен автоматически: <span className="font-mono">{getYouTubeId(editForm.videoUrl) || "—"}</span>
+                                      Выбран ID: <span className="font-mono">{getYouTubeId(editForm.videoUrl) || "—"}</span>
                                     </p>
                                   </div>
 
@@ -504,9 +716,17 @@ export function TeacherDashboard() {
                                     <Textarea
                                       rows={2}
                                       value={editForm.homeworkDescription}
-                                      onChange={(e) => setEditForm((p) => ({ ...p, homeworkDescription: e.target.value }))}
+                                      onChange={(e) =>
+                                        setEditForm((p) => ({ ...p, homeworkDescription: e.target.value }))
+                                      }
                                     />
                                   </div>
+
+                                  {/* ✅ материалы к ДЗ */}
+                                  <LessonHomeworkMaterials
+                                    value={editForm.homeworkAttachments}
+                                    onChange={(arr) => setEditForm((p) => ({ ...p, homeworkAttachments: arr }))}
+                                  />
 
                                   <div className="flex gap-3">
                                     <Button onClick={saveEditLesson}>Сохранить</Button>
@@ -525,7 +745,7 @@ export function TeacherDashboard() {
             })}
           </TabsContent>
 
-          {/* Добавить урок — выбор курса + youtube link/id + предпросмотр */}
+          {/* Добавить урок */}
           <TabsContent value="add">
             <Card>
               <CardHeader>
@@ -549,27 +769,33 @@ export function TeacherDashboard() {
                     </select>
                   </div>
 
-                  <div className="space-y-1">
+                  {/* ✅ выбрать видео */}
+                  <div className="space-y-2">
                     <label className="text-sm">YouTube ссылка или ID</label>
-                    <Input
-                      placeholder="https://youtube.com/watch?v=... или ID"
-                      value={addForm.videoUrl}
-                      onChange={(e) => setAddForm((p) => ({ ...p, videoUrl: e.target.value }))}
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="https://youtube.com/watch?v=... или ID"
+                        value={addForm.videoUrl}
+                        onChange={(e) => setAddForm((p) => ({ ...p, videoUrl: e.target.value }))}
+                      />
+                      <Button type="button" variant="outline" onClick={chooseAddVideo}>
+                        Выбрать
+                      </Button>
+                    </div>
                     <p className="text-xs text-gray-500">
                       Выбран ID: <span className="font-mono">{getYouTubeId(addForm.videoUrl) || "—"}</span>
                     </p>
                   </div>
                 </div>
 
-                {/* маленький предпросмотр */}
+                {/* ✅ предпросмотр */}
                 <div className="max-w-md">
                   <div className="rounded overflow-hidden bg-black">
                     {getYouTubeId(addForm.videoUrl) ? (
                       <YouTube videoId={getYouTubeId(addForm.videoUrl)} opts={smallOpts} />
                     ) : (
                       <div className="h-[140px] flex items-center justify-center text-white/70 text-sm">
-                        Вставьте ссылку или ID — появится предпросмотр
+                        Вставьте ссылку/ID и нажмите “Выбрать”
                       </div>
                     )}
                   </div>
@@ -604,12 +830,18 @@ export function TeacherDashboard() {
                   />
                 </div>
 
+                {/* ✅ прикрепить ссылку/файл к ДЗ */}
+                <LessonHomeworkMaterials
+                  value={addForm.homeworkAttachments}
+                  onChange={(arr) => setAddForm((p) => ({ ...p, homeworkAttachments: arr }))}
+                />
+
                 <Button onClick={handleAddLesson}>Добавить</Button>
               </CardContent>
             </Card>
           </TabsContent>
 
-          {/* Архив — 2 студента отдельно, по клику раскрывается всё по студенту */}
+          {/* Архив — можно разархивировать */}
           <TabsContent value="archive" className="space-y-4">
             {teacherHomeworksArchived.length === 0 ? (
               <Card>
@@ -628,6 +860,7 @@ export function TeacherDashboard() {
                       <button
                         onClick={() => toggleArchiveStudent(studentId)}
                         className="w-full flex items-center justify-between"
+                        type="button"
                       >
                         <div className="text-left">
                           <div className="font-semibold">
@@ -644,6 +877,7 @@ export function TeacherDashboard() {
                           {list.map((hw) => {
                             const courseDetails = getCourseWithDetails(hw.courseId);
                             const lesson = lessons.find((l) => l.id === hw.lessonId);
+
                             return (
                               <div key={hw.id} className="border rounded-lg p-4 bg-white">
                                 <div className="flex items-start justify-between gap-4">
@@ -670,6 +904,14 @@ export function TeacherDashboard() {
                                     <div className="text-sm whitespace-pre-wrap">{hw.teacherComment}</div>
                                   </div>
                                 ) : null}
+
+                                {/* ✅ разархивировать */}
+                                <div className="mt-4">
+                                  <Button variant="outline" onClick={() => handleUnarchive(hw.id)}>
+                                    <Undo2 className="w-4 h-4 mr-2" />
+                                    Разархивировать
+                                  </Button>
+                                </div>
                               </div>
                             );
                           })}

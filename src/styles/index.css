@@ -6,3 +6,8 @@
 :root {
   --radius: 10px;
 }
+@layer components {
+  .app-container {
+    @apply mx-auto w-full max-w-6xl px-4;
+  }
+}

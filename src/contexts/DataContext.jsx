@@ -1,4 +1,3 @@
-// src/contexts/DataContext.jsx
 import React, { createContext, useContext, useMemo, useState } from "react";
 import {
   mockCategories,
@@ -14,6 +13,7 @@ import {
 const DataContext = createContext(null);
 
 const norm = (s) => String(s ?? "").trim();
+const asArr = (v) => (Array.isArray(v) ? v : []);
 
 export function DataProvider({ children }) {
   const [users] = useState(mockUsers);
@@ -92,12 +92,13 @@ export function DataProvider({ children }) {
       userId,
       courseId,
       content: norm(content),
-      attachments: Array.isArray(attachments) ? attachments : [],
+      attachments: asArr(attachments),
       status: "submitted",
       submittedAt: new Date(),
       reviewedAt: null,
       teacherComment: "",
-      isArchived: false,
+      isArchived: false, // архив преподавателя
+      isStudentArchived: false, // ✅ архив студента
     };
 
     setHomeworks((prev) => [newHomework, ...prev]);
@@ -118,14 +119,49 @@ export function DataProvider({ children }) {
     );
   };
 
+  // Архив преподавателя (у тебя уже было: только accepted)
   const archiveHomework = (homeworkId) => {
     setHomeworks((prev) =>
-      prev.map((hw) => (hw.id === homeworkId ? { ...hw, isArchived: true } : hw))
+      prev.map((hw) => {
+        if (hw.id !== homeworkId) return hw;
+        if (hw.status !== "accepted") return hw;
+        return { ...hw, isArchived: true };
+      })
+    );
+  };
+
+  const unarchiveHomework = (homeworkId) => {
+    setHomeworks((prev) =>
+      prev.map((hw) => (hw.id === homeworkId ? { ...hw, isArchived: false } : hw))
+    );
+  };
+
+  // ✅ студент: обновить ДЗ (редактирование/повторная отправка)
+  const updateHomework = (homeworkId, patch) => {
+    setHomeworks((prev) =>
+      prev.map((hw) => (hw.id === homeworkId ? { ...hw, ...patch } : hw))
+    );
+  };
+
+  // ✅ студент: архивировать “Принято”
+  const archiveStudentHomework = (homeworkId) => {
+    setHomeworks((prev) =>
+      prev.map((hw) => {
+        if (hw.id !== homeworkId) return hw;
+        if (hw.status !== "accepted") return hw;
+        return { ...hw, isStudentArchived: true };
+      })
+    );
+  };
+
+  const unarchiveStudentHomework = (homeworkId) => {
+    setHomeworks((prev) =>
+      prev.map((hw) => (hw.id === homeworkId ? { ...hw, isStudentArchived: false } : hw))
     );
   };
 
   // ===== lessons CRUD (Teacher) =====
-  const addLesson = ({ courseId, title, description, videoUrl, homeworkDescription }) => {
+  const addLesson = ({ courseId, title, description, videoUrl, homeworkDescription, homeworkAttachments }) => {
     const courseLessons = lessons.filter((l) => l.courseId === courseId);
     const nextOrder = courseLessons.length ? Math.max(...courseLessons.map((l) => l.order)) + 1 : 1;
 
@@ -137,6 +173,7 @@ export function DataProvider({ children }) {
       order: nextOrder,
       courseId,
       homeworkDescription: norm(homeworkDescription),
+      homeworkAttachments: asArr(homeworkAttachments),
     };
 
     setLessons((prev) => [...prev, newLesson]);
@@ -170,6 +207,12 @@ export function DataProvider({ children }) {
       submitHomework,
       reviewHomework,
       archiveHomework,
+      unarchiveHomework,
+
+      updateHomework, // ✅
+      archiveStudentHomework, // ✅
+      unarchiveStudentHomework, // ✅
+
       activateToken,
       markLessonAsOpened,
 

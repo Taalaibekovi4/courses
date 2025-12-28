@@ -1,5 +1,12 @@
-import React from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import React, { useEffect } from "react";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+  Outlet,
+} from "react-router-dom";
 
 import { AuthProvider, useAuth } from "../contexts/AuthContext.jsx";
 import { DataProvider } from "../contexts/DataContext.jsx";
@@ -18,8 +25,18 @@ import { StudentDashboard } from "../pages/StudentDashboard.jsx";
 import { StudentCoursePage } from "../pages/StudentCoursePage.jsx";
 import { TeacherDashboard } from "../pages/TeacherDashboard.jsx";
 
-// ✅ вот так (без файлов ui/sonner.jsx)
 import { Toaster } from "sonner";
+
+function ScrollToTop() {
+  const { pathname, search, hash } = useLocation();
+
+  useEffect(() => {
+    if (hash) return;
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [pathname, search, hash]);
+
+  return null;
+}
 
 function ProtectedRoute({ children, allowedRoles }) {
   const { user, isLoading } = useAuth();
@@ -36,30 +53,41 @@ function ProtectedRoute({ children, allowedRoles }) {
   }
 
   if (!user) return <Navigate to="/login" replace />;
-  if (!allowedRoles.includes(user.role)) return <Navigate to="/" replace />;
+
+  if (Array.isArray(allowedRoles) && allowedRoles.length > 0) {
+    if (!allowedRoles.includes(user.role)) return <Navigate to="/" replace />;
+  }
 
   return children;
 }
 
+function ContainerLayout() {
+  return (
+    <div className="app-container">
+      <Outlet />
+    </div>
+  );
+}
+
 function AppRoutes() {
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50">
+    <div className="min-h-screen flex flex-col bg-gray-50 overflow-x-hidden">
       <Header />
+      <ScrollToTop />
 
-      {/* ✅ контейнер для всего сайта */}
       <main className="flex-1">
-        <div className="container mx-auto px-4">
-          <Routes>
-            <Route path="/" element={<HomePage />} />
+        <Routes>
+          {/* ✅ full-width страницы */}
+          <Route path="/" element={<HomePage />} />
+          <Route path="/courses" element={<CoursesListPage />} />
+          <Route path="/categories" element={<CategoriesPage />} />
+          <Route path="/category/:slug" element={<CategoryPage />} />
+          <Route path="/course/:slug" element={<CoursePage />} />
+
+          {/* ✅ контейнерные страницы */}
+          <Route element={<ContainerLayout />}>
             <Route path="/login" element={<LoginPage />} />
 
-            <Route path="/courses" element={<CoursesListPage />} />
-            <Route path="/categories" element={<CategoriesPage />} />
-            <Route path="/category/:slug" element={<CategoryPage />} />
-
-            <Route path="/course/:slug" element={<CoursePage />} />
-
-            {/* Student */}
             <Route
               path="/dashboard"
               element={
@@ -77,7 +105,6 @@ function AppRoutes() {
               }
             />
 
-            {/* Teacher */}
             <Route
               path="/teacher"
               element={
@@ -88,13 +115,11 @@ function AppRoutes() {
             />
 
             <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </div>
+          </Route>
+        </Routes>
       </main>
 
       <Footer />
-
-      {/* ✅ Sonner toaster */}
       <Toaster richColors />
     </div>
   );

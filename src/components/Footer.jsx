@@ -7,7 +7,7 @@ const WHATSAPP_NUMBER = "996221000953"; // <-- поменяй на свой
 export function Footer() {
   return (
     <footer className="bg-gray-900 text-gray-300 mt-auto">
-      <div className="container mx-auto px-4 py-12">
+      <div className="app-container py-12">
         <div className="grid md:grid-cols-4 gap-8">
           <div>
             <div className="flex items-center gap-2 mb-4">

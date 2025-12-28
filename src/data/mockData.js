@@ -9,12 +9,40 @@ export const mockUsers = [
   { id: "teacher1", name: "Александр Волков", email: "teacher@example.com", role: "teacher" },
 ];
 
-// Категории (4 штуки)
+// Категории (4 штуки) ✅ добавил imageUrl
 export const mockCategories = [
-  { id: "cat1", name: "Программирование", description: "Курсы по разработке ПО", slug: "programming" },
-  { id: "cat2", name: "Дизайн", description: "UI/UX, Figma", slug: "design" },
-  { id: "cat3", name: "Маркетинг", description: "Реклама и продвижение", slug: "marketing" },
-  { id: "cat4", name: "Карьера", description: "Резюме и собеседования", slug: "career" },
+  {
+    id: "cat1",
+    name: "Программирование",
+    description: "Курсы по разработке ПО",
+    slug: "programming",
+    imageUrl:
+      "https://images.unsplash.com/photo-1518779578993-ec3579fee39f?auto=format&fit=crop&w=1200&q=80",
+  },
+  {
+    id: "cat2",
+    name: "Дизайн",
+    description: "UI/UX, Figma",
+    slug: "design",
+    imageUrl:
+      "https://images.unsplash.com/photo-1559028012-481c04fa702d?auto=format&fit=crop&w=1200&q=80",
+  },
+  {
+    id: "cat3",
+    name: "Маркетинг",
+    description: "Реклама и продвижение",
+    slug: "marketing",
+    imageUrl:
+      "https://images.unsplash.com/photo-1557838923-2985c318be48?auto=format&fit=crop&w=1200&q=80",
+  },
+  {
+    id: "cat4",
+    name: "Карьера",
+    description: "Резюме и собеседования",
+    slug: "career",
+    imageUrl:
+      "https://images.unsplash.com/photo-1521737711867-e3b97375f902?auto=format&fit=crop&w=1200&q=80",
+  },
 ];
 
 // Преподаватели
@@ -24,12 +52,14 @@ export const mockTeachers = [
     name: "Александр Волков",
     bio: "Senior разработчик с 10-летним опытом в веб-разработке",
     email: "teacher@example.com",
+    avatarUrl: "https://images.unsplash.com/photo-1544723795-3fb6469f5b39?auto=format&fit=crop&w=1200&q=80",
   },
   {
     id: "teacher2",
     name: "Елена Козлова",
     bio: "UI/UX дизайнер, специалист по Figma и Adobe XD",
     email: "kozlova@example.com",
+    avatarUrl: "https://www.kino-teatr.ru/acter/album/293193/773461.jpg",
   },
 ];
 
@@ -195,9 +225,7 @@ export const mockHomeworks = [
     userId: "student1",
     courseId: "course1",
     content: "Сделал проект. Ссылка: https://github.com/example/react-app",
-    attachments: [
-      { type: "link", name: "GitHub", url: "https://github.com/example/react-app" },
-    ],
+    attachments: [{ type: "link", name: "GitHub", url: "https://github.com/example/react-app" }],
     status: "accepted",
     submittedAt: new Date("2024-01-16"),
     reviewedAt: new Date("2024-01-17"),
@@ -228,7 +256,7 @@ export const mockHomeworks = [
     submittedAt: new Date("2024-02-02"),
     reviewedAt: new Date("2024-02-03"),
     teacherComment: "Добавь примеры narrowing",
-    isArchived: true, // ✅ уже в архиве, чтобы вкладка архив была не пустой
+    isArchived: true, // ✅ уже в архиве
   },
 
   // student2 React
@@ -244,4 +272,3 @@ export const mockHomeworks = [
     isArchived: false,
   },
 ];
-
