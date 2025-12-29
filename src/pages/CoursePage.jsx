@@ -4,7 +4,14 @@ import { useData } from "../contexts/DataContext.jsx";
 import { Button } from "../components/ui/button.jsx";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card.jsx";
 import { Badge } from "../components/ui/badge.jsx";
-import { PlayCircle, CheckCircle, X, BookOpen, GraduationCap, ShoppingCart } from "lucide-react";
+import {
+  PlayCircle,
+  CheckCircle,
+  X,
+  BookOpen,
+  GraduationCap,
+  ShoppingCart,
+} from "lucide-react";
 
 const WHATSAPP_NUMBER = "996221000953";
 const PREVIEW_SECONDS = 5;
@@ -59,6 +66,13 @@ function ensureYouTubeScript() {
   });
 }
 
+const fmtTime = (sec) => {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, "0")}`;
+};
+
 export function CoursePage() {
   const { slug } = useParams();
 
@@ -77,13 +91,25 @@ export function CoursePage() {
 
   const [isVideoReady, setIsVideoReady] = useState(false);
   const [videoError, setVideoError] = useState("");
+  const [isVideoEnded, setIsVideoEnded] = useState(false);
+
+  // ✅ кастом-контролы
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [curTime, setCurTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [isFs, setIsFs] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
 
   const tariffsRef = useRef(null);
   const playRequestedRef = useRef(false);
 
+  const ytWrapRef = useRef(null);
   const ytMountRef = useRef(null);
   const ytPlayerRef = useRef(null);
   const ytTimerRef = useRef(null);
+  const uiTimerRef = useRef(null);
+  const progTimerRef = useRef(null);
 
   const course = useMemo(
     () => courses.find((c) => String(c?.slug) === String(slug)) || null,
@@ -147,8 +173,25 @@ export function CoursePage() {
     }
   }, []);
 
+  const stopProgTimer = useCallback(() => {
+    if (progTimerRef.current) {
+      clearInterval(progTimerRef.current);
+      progTimerRef.current = null;
+    }
+  }, []);
+
+  const stopUiTimer = useCallback(() => {
+    if (uiTimerRef.current) {
+      clearTimeout(uiTimerRef.current);
+      uiTimerRef.current = null;
+    }
+  }, []);
+
   const destroyYouTubePlayer = useCallback(() => {
     stopYouTubeTimer();
+    stopProgTimer();
+    stopUiTimer();
+
     const p = ytPlayerRef.current;
     ytPlayerRef.current = null;
     if (p && typeof p.destroy === "function") {
@@ -156,13 +199,21 @@ export function CoursePage() {
         p.destroy();
       } catch (_) {}
     }
-  }, [stopYouTubeTimer]);
+  }, [stopYouTubeTimer, stopProgTimer, stopUiTimer]);
 
   const closePreview = useCallback(() => {
     setIsPreviewOpen(false);
     setIsPaywallOpen(false);
     setIsVideoReady(false);
     setVideoError("");
+    setIsVideoEnded(false);
+
+    setIsPlaying(false);
+    setIsMuted(false);
+    setCurTime(0);
+    setDuration(0);
+    setControlsVisible(true);
+
     playRequestedRef.current = false;
     destroyYouTubePlayer();
   }, [destroyYouTubePlayer]);
@@ -173,6 +224,14 @@ export function CoursePage() {
     setIsPreviewOpen(true);
     setIsVideoReady(false);
     setVideoError("");
+    setIsVideoEnded(false);
+
+    setIsPlaying(false);
+    setIsMuted(false);
+    setCurTime(0);
+    setDuration(0);
+    setControlsVisible(true);
+
     playRequestedRef.current = true;
   }, []);
 
@@ -211,6 +270,7 @@ export function CoursePage() {
         p.seekTo(PREVIEW_SECONDS, true);
       } catch (_) {}
       setIsPaywallOpen(true);
+      setIsPlaying(false);
       stopYouTubeTimer();
     }
   }, [stopYouTubeTimer]);
@@ -220,29 +280,141 @@ export function CoursePage() {
     ytTimerRef.current = setInterval(clampPreviewYouTube, 200);
   }, [clampPreviewYouTube, stopYouTubeTimer]);
 
+  const pullPlayerState = useCallback(() => {
+    const p = ytPlayerRef.current;
+    if (!p) return;
+
+    try {
+      if (typeof p.getCurrentTime === "function") setCurTime(Number(p.getCurrentTime() || 0));
+      if (typeof p.getDuration === "function") setDuration(Number(p.getDuration() || 0));
+      if (typeof p.isMuted === "function") setIsMuted(Boolean(p.isMuted()));
+    } catch (_) {}
+  }, []);
+
+  const startProgTimer = useCallback(() => {
+    stopProgTimer();
+    progTimerRef.current = setInterval(pullPlayerState, 250);
+  }, [pullPlayerState, stopProgTimer]);
+
+  const showControls = useCallback(() => {
+    setControlsVisible(true);
+    stopUiTimer();
+    uiTimerRef.current = setTimeout(() => {
+      setControlsVisible(false);
+    }, 2000);
+  }, [stopUiTimer]);
+
+  const togglePlay = useCallback(() => {
+    const p = ytPlayerRef.current;
+    if (!p || isPaywallOpen || isVideoEnded || videoError) return;
+
+    try {
+      const state = typeof p.getPlayerState === "function" ? p.getPlayerState() : null;
+      const isCurrentlyPlaying = window.YT && state === window.YT.PlayerState.PLAYING;
+
+      if (isCurrentlyPlaying) {
+        p.pauseVideo();
+        setIsPlaying(false);
+      } else {
+        p.playVideo();
+        setIsPlaying(true);
+      }
+    } catch (_) {}
+
+    showControls();
+  }, [isPaywallOpen, isVideoEnded, videoError, showControls]);
+
+  const toggleMute = useCallback(() => {
+    const p = ytPlayerRef.current;
+    if (!p || isPaywallOpen || isVideoEnded || videoError) return;
+
+    try {
+      if (typeof p.isMuted === "function" && p.isMuted()) {
+        p.unMute();
+        setIsMuted(false);
+      } else {
+        p.mute();
+        setIsMuted(true);
+      }
+    } catch (_) {}
+
+    showControls();
+  }, [isPaywallOpen, isVideoEnded, videoError, showControls]);
+
+  const seekTo = useCallback(
+    (t) => {
+      const p = ytPlayerRef.current;
+      if (!p || isPaywallOpen || isVideoEnded || videoError) return;
+
+      const next = Math.max(0, Math.min(Number(t) || 0, duration || 0));
+      try {
+        p.seekTo(next, true);
+        setCurTime(next);
+      } catch (_) {}
+
+      showControls();
+    },
+    [duration, isPaywallOpen, isVideoEnded, videoError, showControls]
+  );
+
+  const toggleFullscreen = useCallback(() => {
+    const el = ytWrapRef.current;
+    if (!el) return;
+
+    const doc = document;
+    const fsEl = doc.fullscreenElement;
+
+    if (!fsEl) {
+      const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+      if (req) req.call(el);
+    } else {
+      const exit = doc.exitFullscreen || doc.webkitExitFullscreen || doc.mozCancelFullScreen || doc.msExitFullscreen;
+      if (exit) exit.call(doc);
+    }
+    showControls();
+  }, [showControls]);
+
+  useEffect(() => {
+    const onFs = () => {
+      setIsFs(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
   const initYouTubePlayer = useCallback(
     async (videoId) => {
       try {
         await ensureYouTubeScript();
-
         if (!ytMountRef.current) return;
 
         destroyYouTubePlayer();
+
         setIsVideoReady(false);
         setVideoError("");
+        setIsVideoEnded(false);
+        setIsPlaying(false);
+        setCurTime(0);
+        setDuration(0);
+        setIsMuted(false);
+        setControlsVisible(true);
 
         ytPlayerRef.current = new window.YT.Player(ytMountRef.current, {
           videoId,
           width: "100%",
           height: "100%",
+          host: "https://www.youtube-nocookie.com",
           playerVars: {
             autoplay: 1,
-            controls: 0,
+            controls: 0, // ✅ свои контролы
             disablekb: 1,
-            fs: 0,
+            fs: 0, // ✅ не ютуб-фуллскрин, а наш
             modestbranding: 1,
             rel: 0,
             playsinline: 1,
+            iv_load_policy: 3,
+            showinfo: 0,
+            origin: window.location.origin,
           },
           events: {
             onReady: (e) => {
@@ -254,29 +426,67 @@ export function CoursePage() {
                 e.target.playVideo();
               } catch (_) {}
 
+              try {
+                setDuration(Number(e.target.getDuration?.() || 0));
+                setIsMuted(Boolean(e.target.isMuted?.() || false));
+              } catch (_) {}
+
+              setIsPlaying(true);
               startYouTubeTimer();
+              startProgTimer();
+              showControls();
             },
             onStateChange: (e) => {
-              if (window.YT && e?.data === window.YT.PlayerState.PLAYING) {
+              if (!window.YT) return;
+
+              if (e?.data === window.YT.PlayerState.PLAYING) {
                 setIsVideoReady(true);
+                setIsVideoEnded(false);
+                setIsPlaying(true);
                 startYouTubeTimer();
+                startProgTimer();
+                return;
+              }
+
+              if (e?.data === window.YT.PlayerState.PAUSED) {
+                setIsPlaying(false);
+                return;
+              }
+
+              // ✅ конец видео — перекрываем рекомендации
+              if (e?.data === window.YT.PlayerState.ENDED) {
+                stopYouTubeTimer();
+                stopProgTimer();
+                setIsVideoEnded(true);
+                setIsPlaying(false);
+                try {
+                  e.target.stopVideo();
+                  e.target.seekTo(0, true);
+                } catch (_) {}
               }
             },
             onError: (e) => {
               console.error("YouTube error:", e);
               setVideoError("YouTube не дал воспроизвести это видео. Поставь другое видео в урок.");
               setIsVideoReady(false);
+              setIsVideoEnded(false);
+              setIsPlaying(false);
               stopYouTubeTimer();
+              stopProgTimer();
             },
           },
         });
       } catch (err) {
         console.error("YT init error:", err);
-        setVideoError("Не удалось загрузить YouTube плеер.");
+        setVideoError("Не удалось загрузить плеер.");
         setIsVideoReady(false);
+        setIsVideoEnded(false);
+        setIsPlaying(false);
+        stopYouTubeTimer();
+        stopProgTimer();
       }
     },
-    [destroyYouTubePlayer, startYouTubeTimer, stopYouTubeTimer]
+    [destroyYouTubePlayer, startYouTubeTimer, stopYouTubeTimer, startProgTimer, stopProgTimer, showControls]
   );
 
   useEffect(() => {
@@ -285,6 +495,12 @@ export function CoursePage() {
     setIsPaywallOpen(false);
     setIsVideoReady(false);
     setVideoError("");
+    setIsVideoEnded(false);
+    setIsPlaying(false);
+    setCurTime(0);
+    setDuration(0);
+    setIsMuted(false);
+    setControlsVisible(true);
 
     if (!youTubeId) {
       setVideoError("Неверная YouTube ссылка/ID (нужно v=... или youtu.be/...).");
@@ -386,7 +602,12 @@ ${list}`;
 
             <div className="mt-6 flex items-center gap-3">
               <div className="w-11 h-11 rounded-full overflow-hidden border border-white/25 bg-white/10">
-                <img src={teacherImg} alt={teacher?.name || "Teacher"} className="w-full h-full object-cover" loading="lazy" />
+                <img
+                  src={teacherImg}
+                  alt={teacher?.name || "Teacher"}
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
               </div>
               <div className="leading-tight">
                 <div className="font-semibold">{teacher?.name || "—"}</div>
@@ -410,7 +631,12 @@ ${list}`;
               </CardHeader>
               <CardContent className="flex gap-4">
                 <div className="w-12 h-12 rounded-xl overflow-hidden bg-gray-200 shrink-0">
-                  <img src={teacherImg} alt={teacher?.name || "Teacher"} className="w-full h-full object-cover" loading="lazy" />
+                  <img
+                    src={teacherImg}
+                    alt={teacher?.name || "Teacher"}
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                  />
                 </div>
                 <p className="text-gray-700 leading-relaxed">{teacher?.bio || "—"}</p>
               </CardContent>
@@ -610,25 +836,145 @@ ${list}`;
             </div>
 
             <div className="relative bg-gray-950">
-              <div className="relative w-full" style={{ paddingBottom: "56.25%" }}>
+              <div ref={ytWrapRef} className="relative w-full" style={{ paddingBottom: "56.25%" }}>
                 <div ref={ytMountRef} className="absolute inset-0 w-full h-full" />
 
+                {/* ✅ Плёнка поверх iframe: перехватываем клики и НЕ даём открыть YouTube */}
+                {!videoError && !isPaywallOpen && !isVideoEnded && (
+                  <div
+                    className="absolute inset-0 z-20"
+                    onMouseMove={showControls}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      togglePlay();
+                    }}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    aria-hidden="true"
+                    style={{ cursor: "pointer" }}
+                  />
+                )}
+
                 {!isVideoReady && !videoError && (
-                  <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="absolute inset-0 flex items-center justify-center z-30">
                     <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white" />
                   </div>
                 )}
 
                 {videoError && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white/90 px-6 text-center">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white/90 px-6 text-center z-30">
                     <div className="text-base font-semibold mb-2">Видео не загрузилось</div>
                     <div className="text-sm text-white/70 break-words">{videoError}</div>
+                  </div>
+                )}
+
+                {/* ✅ Кастом контролы (никаких YouTube кнопок/ссылок) */}
+                {!videoError && !isPaywallOpen && !isVideoEnded && (
+                  <div
+                    className={[
+                      "absolute left-0 right-0 bottom-0 z-40 px-3 pb-3 pt-10",
+                      "transition-opacity",
+                      controlsVisible ? "opacity-100" : "opacity-0",
+                    ].join(" ")}
+                    style={{
+                      background:
+                        "linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.0))",
+                      pointerEvents: "none",
+                    }}
+                  >
+                    <div className="flex items-center gap-3" style={{ pointerEvents: "auto" }}>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          togglePlay();
+                        }}
+                        className="h-10 w-10 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white flex items-center justify-center"
+                        aria-label={isPlaying ? "Пауза" : "Плей"}
+                      >
+                        <PlayCircle className="w-6 h-6" />
+                      </button>
+
+                      <div className="text-xs text-white/80 whitespace-nowrap">
+                        {fmtTime(curTime)} / {fmtTime(duration)}
+                      </div>
+
+                      <input
+                        type="range"
+                        min={0}
+                        max={Math.max(1, Math.floor(duration || 0))}
+                        value={Math.min(Math.floor(curTime || 0), Math.floor(duration || 0))}
+                        onChange={(e) => seekTo(e.target.value)}
+                        className="flex-1"
+                        style={{ accentColor: "white" }}
+                        aria-label="Прогресс"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          toggleMute();
+                        }}
+                        className="h-10 px-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white"
+                        aria-label={isMuted ? "Включить звук" : "Выключить звук"}
+                      >
+                        {isMuted ? "🔇" : "🔊"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          toggleFullscreen();
+                        }}
+                        className="h-10 px-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white"
+                        aria-label="Полноэкранный режим"
+                      >
+                        {isFs ? "⤢" : "⤢"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ✅ Перекрываем end-screen рекомендации */}
+                {isVideoEnded && !isPaywallOpen && !videoError && (
+                  <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 z-30">
+                    <div className="w-full max-w-md bg-white rounded-2xl p-5 shadow-xl">
+                      <div className="text-lg font-semibold">Видео закончилось</div>
+                      <p className="text-sm text-gray-600 mt-1">Рекомендации YouTube не показываем.</p>
+                      <div className="mt-4 grid grid-cols-2 gap-3">
+                        <Button variant="outline" onClick={closePreview}>
+                          Закрыть
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            closePreview();
+                            setTimeout(() => {
+                              scrollToTariffs();
+                            }, 100);
+                          }}
+                        >
+                          Купить тариф
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
 
               {isPaywallOpen && (
-                <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4">
+                <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 z-30">
                   <div className="w-full max-w-md bg-white rounded-2xl p-5 shadow-xl">
                     <div className="text-lg font-semibold">Купите тариф, пожалуйста 🙂</div>
                     <p className="text-sm text-gray-600 mt-1">
@@ -656,7 +1002,7 @@ ${list}`;
             </div>
 
             <div className="px-4 py-3 bg-gray-50 border-t text-sm text-gray-600">
-              Превью покажет только начало урока — дальше доступ открывается после покупки.
+              
             </div>
           </div>
         </div>
