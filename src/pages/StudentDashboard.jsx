@@ -1,14 +1,28 @@
 import React, { useMemo, useEffect, useState, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Key, Archive, RotateCcw, PlayCircle, CheckCircle, XCircle, Clock } from "lucide-react";
+import {
+  Key,
+  Archive,
+  RotateCcw,
+  PlayCircle,
+  CheckCircle,
+  XCircle,
+  Clock,
+} from "lucide-react";
 
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { useData } from "../contexts/DataContext.jsx";
 
 import { Button } from "../components/ui/button.jsx";
 import { Input } from "../components/ui/input.jsx";
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "../components/ui/card.jsx";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardContent,
+  CardDescription,
+} from "../components/ui/card.jsx";
 import { Badge } from "../components/ui/badge.jsx";
 import { Progress } from "../components/ui/progress.jsx";
 
@@ -47,15 +61,7 @@ function getHwIdsKey(hw) {
 }
 
 function getHwCourseId(hw) {
-  return String(
-    hw?.course ??
-      hw?.course_id ??
-      hw?.courseId ??
-      hw?.lesson_course ??
-      hw?.lesson?.course ??
-      hw?.lesson?.course_id ??
-      ""
-  );
+  return String(hw?.course_id ?? hw?.courseId ?? hw?.course ?? "");
 }
 
 function getHwLessonId(hw) {
@@ -63,46 +69,32 @@ function getHwLessonId(hw) {
 }
 
 function getHwTitle(hw) {
-  return (
-    hw?.lesson_title ||
-    hw?.lessonTitle ||
-    hw?.lesson?.title ||
-    hw?.lesson?.name ||
-    (getHwLessonId(hw) ? `Урок #${getHwLessonId(hw)}` : "Урок")
-  );
+  return hw?.lesson_title || (getHwLessonId(hw) ? `Урок #${getHwLessonId(hw)}` : "Урок");
 }
 
 function getHwStatus(hw) {
-  return String(hw?.status ?? "").toLowerCase();
+  return String(hw?.status ?? "").toLowerCase(); // accepted | rework | declined
 }
 
 function getHwTeacherComment(hw) {
-  return hw?.teacher_comment ?? hw?.teacherComment ?? hw?.comment ?? "";
+  return hw?.comment ?? "";
 }
 
 function getHwDate(hw) {
-  return (
-    hw?.submitted_at ||
-    hw?.submittedAt ||
-    hw?.created_at ||
-    hw?.createdAt ||
-    hw?.updated_at ||
-    hw?.updatedAt ||
-    ""
-  );
+  return hw?.updated_at || hw?.created_at || "";
 }
 
 function homeworkStatusBadge(status) {
   if (status === "accepted") return <Badge className="bg-green-600 text-white border-transparent">Принято</Badge>;
-  if (status === "rejected") return <Badge variant="destructive">На доработку</Badge>;
-  if (status === "submitted") return <Badge variant="secondary">На проверке</Badge>;
+  if (status === "rework") return <Badge variant="secondary">На доработку</Badge>;
+  if (status === "declined") return <Badge variant="destructive">Отклонено</Badge>;
   return <Badge variant="outline">—</Badge>;
 }
 
 function homeworkIcon(status) {
   if (status === "accepted") return <CheckCircle className="w-5 h-5 text-green-600" />;
-  if (status === "rejected") return <XCircle className="w-5 h-5 text-red-600" />;
-  if (status === "submitted") return <Clock className="w-5 h-5 text-orange-600" />;
+  if (status === "rework") return <Clock className="w-5 h-5 text-orange-600" />;
+  if (status === "declined") return <XCircle className="w-5 h-5 text-red-600" />;
   return <PlayCircle className="w-5 h-5 text-gray-400" />;
 }
 
@@ -146,6 +138,10 @@ function DashNav({ activeTab }) {
   );
 }
 
+function getCourseId(course) {
+  return String(course?.id ?? course?.course_id ?? "").trim();
+}
+
 export function StudentDashboard() {
   const { user } = useAuth();
   const location = useLocation();
@@ -179,9 +175,9 @@ export function StudentDashboard() {
     if (!user) return;
     data.loadMyCourses?.();
     data.loadMyHomeworks?.();
-  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
-  // local archive for homeworks
   const [archivedIds, setArchivedIds] = useState(() => new Set());
   useEffect(() => {
     if (!user?.id) return;
@@ -203,31 +199,21 @@ export function StudentDashboard() {
   const myCourses = useMemo(() => (Array.isArray(data.myCourses) ? data.myCourses : []), [data.myCourses]);
 
   const courseProgress = useCallback(
-    (courseId) => {
-      const cid = String(courseId || "");
-      const lessons = (data.lessonsByCourse || {})[cid];
-      const totalLessons = Array.isArray(lessons) ? lessons.length : 0;
+    (course) => {
+      const cid = getCourseId(course);
+      const lessons = Array.isArray(course?.lessons) ? course.lessons : [];
+      const totalLessons = lessons.length;
 
-      const acceptedCount = allHomeworks.filter((hw) => getHwCourseId(hw) === cid && getHwStatus(hw) === "accepted")
-        .length;
+      const acceptedCount = allHomeworks.filter(
+        (hw) => getHwCourseId(hw) === cid && getHwStatus(hw) === "accepted"
+      ).length;
 
-      // если уроки ещё не подгружены — прогресс по ДЗ всё равно покажем, но процент от max(accepted,1)
       const denom = Math.max(totalLessons, acceptedCount, 1);
       const pct = Math.min(100, Math.round((acceptedCount / denom) * 100));
 
       return { totalLessons, acceptedCount, pct };
     },
-    [data.lessonsByCourse, allHomeworks]
-  );
-
-  const ensureLessonsLoaded = useCallback(
-    (courseId) => {
-      const cid = String(courseId || "");
-      const current = (data.lessonsByCourse || {})[cid];
-      if (Array.isArray(current)) return;
-      data.loadLessonsPublicByCourse?.(cid);
-    },
-    [data]
+    [allHomeworks]
   );
 
   async function handleActivateToken() {
@@ -239,7 +225,7 @@ export function StudentDashboard() {
 
     const res = await data.activateToken?.(token);
     if (res?.ok) {
-      toast.success("Токен успешно активирован!");
+      toast.success("Доступ успешно активирован!");
       setTokenInput("");
       onTabChange("courses");
     } else {
@@ -263,7 +249,8 @@ export function StudentDashboard() {
     setArchivedIds(next);
   }
 
-  const buildLessonLink = (courseId, lessonId) => `/student/course/${courseId}?lesson=${encodeURIComponent(lessonId)}`;
+  const buildLessonLink = (courseId, lessonId) =>
+    `/student/course/${encodeURIComponent(String(courseId))}?lesson=${encodeURIComponent(String(lessonId))}`;
 
   if (!user) return null;
 
@@ -282,31 +269,43 @@ export function StudentDashboard() {
             </Card>
           ) : myCourses.length === 0 ? (
             <Card>
-              <CardContent className="py-12 text-center">
-                <p className="text-gray-600 mb-4">У вас пока нет активных курсов</p>
-                <Link to="/courses">
-                  <Button>Посмотреть каталог</Button>
-                </Link>
+              <CardContent className="py-14 text-center">
+                <div className="mx-auto max-w-xl">
+                  <h2 className="text-xl font-semibold mb-2">У вас пока нет доступа к курсам</h2>
+                  <p className="text-gray-600">
+                    Получите токен после покупки и активируйте его — курсы и уроки появятся здесь автоматически.
+                  </p>
+
+                  <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
+                    <Button onClick={() => onTabChange("activate")}>
+                      <Key className="w-4 h-4 mr-2" />
+                      Взять доступ
+                    </Button>
+
+                    <Link to="/courses">
+                      <Button variant="outline">Посмотреть каталог</Button>
+                    </Link>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           ) : (
             <div className="grid gap-6 md:grid-cols-2">
-              {myCourses.map((course) => {
-                const cid = course?.id ?? course?.pk ?? course?.course_id ?? course?.courseId;
-                const key = String(cid ?? course?.title ?? Math.random());
-                const title = course?.title || course?.name || "Курс";
+              {myCourses.map((course, idx) => {
+                const cid = getCourseId(course);
+                if (!cid) return null;
+
+                const key = `course_${cid}_${idx}`;
+                const title = course?.title || course?.name || course?.access?.course_title || "Курс";
+                const categoryName = course?.category_name || "Категория";
+
                 const teacherName =
                   course?.teacher_name ||
-                  course?.teacher?.name ||
-                  course?.teacher?.username ||
-                  course?.teacher_username ||
+                  course?.instructor_name ||
+                  course?.access?.instructor_name ||
                   "Преподаватель";
-                const categoryName = course?.category_name || course?.category?.name || "Категория";
 
-                // подгружаем уроки (для корректного totalLessons)
-                ensureLessonsLoaded(cid);
-
-                const { totalLessons, acceptedCount, pct } = courseProgress(cid);
+                const { totalLessons, acceptedCount, pct } = courseProgress(course);
 
                 return (
                   <Card key={key} className="h-full">
@@ -333,9 +332,15 @@ export function StudentDashboard() {
                           <Progress value={pct} />
                         </div>
 
-                        <Link to={`/student/course/${cid}`}>
+                        <Link to={`/student/course/${encodeURIComponent(cid)}`}>
                           <Button className="w-full">Перейти к курсу</Button>
                         </Link>
+
+                        {course?.access?.remaining_videos != null ? (
+                          <div className="text-sm text-gray-600">
+                            Осталось открытий видео: <span className="font-medium">{course.access.remaining_videos}</span>
+                          </div>
+                        ) : null}
                       </div>
                     </CardContent>
                   </Card>
@@ -380,7 +385,7 @@ export function StudentDashboard() {
                         <div className="min-w-0 flex items-start gap-3">
                           {homeworkIcon(status)}
                           <div className="min-w-0">
-                            <h4 className="font-semibold truncate">{hw?.course_title || hw?.courseTitle || "Курс"}</h4>
+                            <h4 className="font-semibold truncate">{hw?.course_title || "Курс"}</h4>
                             <p className="text-sm text-gray-600 truncate">{lessonTitle}</p>
                           </div>
                         </div>
@@ -430,7 +435,7 @@ export function StudentDashboard() {
           <CardContent>
             <div className="flex flex-col gap-3 sm:flex-row">
               <Input
-                placeholder="Введите токен (например: ABC123XYZ)"
+                placeholder="Введите токен (например: ABCDEF123)"
                 value={tokenInput}
                 onChange={(e) => setTokenInput(e.target.value)}
               />
@@ -439,10 +444,13 @@ export function StudentDashboard() {
                 {data.loading?.activateToken ? "Активация..." : "Активировать"}
               </Button>
             </div>
+
             {data.error?.activateToken ? (
               <p className="text-sm text-red-600 mt-3">{data.error.activateToken}</p>
             ) : (
-              <p className="text-sm text-gray-600 mt-4">Токен можно получить в WhatsApp после покупки курса</p>
+              <p className="text-sm text-gray-600 mt-4">
+                После активации курсы появятся в разделе “Мои курсы”. Доступ к видео выдаётся через “Открыть урок”.
+              </p>
             )}
           </CardContent>
         </Card>
@@ -477,7 +485,7 @@ export function StudentDashboard() {
                         <div className="min-w-0 flex items-start gap-3">
                           {homeworkIcon(status)}
                           <div className="min-w-0">
-                            <h4 className="font-semibold truncate">{hw?.course_title || hw?.courseTitle || "Курс"}</h4>
+                            <h4 className="font-semibold truncate">{hw?.course_title || "Курс"}</h4>
                             <p className="text-sm text-gray-600 truncate">{lessonTitle}</p>
                           </div>
                         </div>

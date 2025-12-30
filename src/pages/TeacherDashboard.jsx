@@ -1,4 +1,4 @@
-// TeacherDashboard.jsx
+// src/pages/TeacherDashboard.jsx
 import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import {
@@ -14,8 +14,8 @@ import {
   Plus,
   X,
   Video,
-  FolderPen,
   Search,
+  FolderPen,
 } from "lucide-react";
 
 import { useAuth } from "../contexts/AuthContext.jsx";
@@ -31,10 +31,36 @@ import { Input } from "../components/ui/input.jsx";
 const norm = (s) => String(s ?? "").trim();
 const normLow = (s) => norm(s).toLowerCase();
 
+const LS_TEACHER_HW_ARCHIVE = "teacher_hw_archive_v1";
+
+function safeJsonParse(s, fallback) {
+  try {
+    const v = JSON.parse(s);
+    return v ?? fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function getTeacherArchivedSet(teacherId) {
+  const raw = localStorage.getItem(LS_TEACHER_HW_ARCHIVE) || "{}";
+  const obj = safeJsonParse(raw, {});
+  const key = String(teacherId || "0");
+  const arr = Array.isArray(obj[key]) ? obj[key] : [];
+  return new Set(arr.map(String));
+}
+
+function setTeacherArchivedSet(teacherId, set) {
+  const raw = localStorage.getItem(LS_TEACHER_HW_ARCHIVE) || "{}";
+  const obj = safeJsonParse(raw, {});
+  const key = String(teacherId || "0");
+  obj[key] = Array.from(set);
+  localStorage.setItem(LS_TEACHER_HW_ARCHIVE, JSON.stringify(obj));
+}
+
 function StatusBadge({ status }) {
   const s = normLow(status);
 
-  // поддержка swagger (accepted/rework/declined) + старое submitted
   if (s === "accepted")
     return <Badge className="bg-green-600 text-white border-transparent">Принято</Badge>;
   if (s === "rework")
@@ -48,9 +74,7 @@ function StatusBadge({ status }) {
 }
 
 /* =========================
-   SearchableSelectSingle (FLOW) — НЕ portal
-   - всегда кликается/выбирается
-   - в модалке работает как "резинка" (контент растёт)
+   SearchableSelectSingle — НЕ portal
    ========================= */
 function SearchableSelectSingle({
   value,
@@ -292,7 +316,7 @@ function LessonHomeworkMaterialsSingle({ file, existingUrl, onPick, onClear }) {
 }
 
 /* =========================
-   Modal — "резинка"
+   Modal
    ========================= */
 function Modal({ title, isOpen, onClose, children }) {
   useEffect(() => {
@@ -331,13 +355,15 @@ function Modal({ title, isOpen, onClose, children }) {
           </button>
         </div>
 
-        {/* резинка: растёт до 85vh, потом скролл */}
         <div className="p-4 max-h-[85vh] overflow-auto transition-all">{children}</div>
       </div>
     </div>
   );
 }
 
+/* =========================
+   Normalizers
+   ========================= */
 function normalizeCourseId(c) {
   const id = c?.id ?? c?.course_id ?? c?.pk ?? "";
   return String(id || "");
@@ -348,7 +374,6 @@ function normalizeCategoryName(c) {
 function normalizeCourseTitle(c) {
   return c?.title ?? c?.name ?? c?.course_title ?? "";
 }
-
 function normalizeLessonId(l) {
   const id = l?.id ?? l?.pk ?? "";
   return String(id || "");
@@ -363,12 +388,19 @@ function normalizeLessonCourseId(l) {
 
 function normalizeHomework(hw) {
   const id = hw?.id ?? "";
-  const courseId = hw?.course_id ?? hw?.courseId ?? "";
+  const courseId = hw?.course_id ?? hw?.courseId ?? hw?.course ?? "";
   const courseTitle = hw?.course_title ?? hw?.courseTitle ?? "";
-  const lessonId = hw?.lesson ?? hw?.lessonId ?? "";
-  const lessonTitle = hw?.lesson_title ?? hw?.lessonTitle ?? "";
-  const userId = hw?.user ?? hw?.userId ?? "";
-  const studentUsername = hw?.student_username ?? hw?.studentUsername ?? hw?.username ?? "";
+  const lessonId =
+    hw?.lesson ??
+    hw?.lesson_id ??
+    hw?.lessonId ??
+    hw?.lesson?.id ??
+    hw?.lesson?.pk ??
+    "";
+  const lessonTitle = hw?.lesson_title ?? hw?.lessonTitle ?? hw?.lesson?.title ?? "";
+  const userId = hw?.user ?? hw?.userId ?? hw?.student ?? hw?.student_id ?? "";
+  const studentUsername =
+    hw?.student_username ?? hw?.studentUsername ?? hw?.username ?? hw?.student?.username ?? "";
   const content = hw?.content ?? "";
   const status = hw?.status ?? "submitted";
   const teacherComment = hw?.comment ?? hw?.teacherComment ?? "";
@@ -389,30 +421,41 @@ function normalizeHomework(hw) {
     createdAt: String(createdAt || ""),
     reviewedAt: String(reviewedAt || ""),
     attachments: hw?.attachments ?? [],
-    isArchived: !!hw?.isArchived,
   };
+}
+
+function canPlayVideo(url) {
+  const u = norm(url);
+  if (!u) return false;
+  if (u.startsWith("blob:")) return true;
+  if (u.startsWith("http://") || u.startsWith("https://")) return true;
+  return false;
+}
+
+function isTeacherCanReview(status) {
+  const s = normLow(status);
+  // submitted — точно проверяем
+  // rework — если бэк НЕ сбрасывает обратно в submitted после повторной отправки
+  return s === "submitted" || !s || s === "rework";
 }
 
 export function TeacherDashboard() {
   const { user } = useAuth();
+  const data = useData();
 
   const {
     categories,
     courses,
-    homeworks,
-    lessons,
+
+    teacherLessons,
+    teacherHomeworks,
 
     loadPublic,
     loadTeacherLessons,
     loadTeacherHomeworks,
 
-    findUserById,
-    getCourseWithDetails,
-    getLessonsByCourse,
-
     reviewHomework,
-    archiveHomework,
-    unarchiveHomework,
+
     addLesson,
     updateLesson,
     addCourse,
@@ -420,7 +463,7 @@ export function TeacherDashboard() {
 
     loading,
     error,
-  } = useData();
+  } = data || {};
 
   const [tab, setTab] = useState("homework");
   const [homeworkFilter, setHomeworkFilter] = useState("all"); // all | submitted | accepted
@@ -429,6 +472,9 @@ export function TeacherDashboard() {
   const [expandedStudents, setExpandedStudents] = useState({});
   const [expandedArchiveStudents, setExpandedArchiveStudents] = useState({});
   const [expandedCourse, setExpandedCourse] = useState(null);
+
+  // локальный архив
+  const [archivedIds, setArchivedIds] = useState(() => new Set());
 
   // MODAL: add course
   const [isAddCourseOpen, setIsAddCourseOpen] = useState(false);
@@ -469,9 +515,12 @@ export function TeacherDashboard() {
     homeworkFile: null,
   });
 
-  // initial load
   useEffect(() => {
-    if (!user) return;
+    if (!user?.id) return;
+
+    const set0 = getTeacherArchivedSet(user.id);
+    setArchivedIds(set0);
+
     (async () => {
       try {
         await loadPublic?.();
@@ -484,7 +533,6 @@ export function TeacherDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  // cleanup blobs
   useEffect(() => {
     return () => {
       if (addForm.videoPreviewUrl?.startsWith("blob:")) {
@@ -504,13 +552,15 @@ export function TeacherDashboard() {
   if (!user) return null;
 
   const normalizedCourses = useMemo(() => (Array.isArray(courses) ? courses : []), [courses]);
-  const normalizedLessons = useMemo(() => (Array.isArray(lessons) ? lessons : []), [lessons]);
+  const normalizedLessons = useMemo(
+    () => (Array.isArray(teacherLessons) ? teacherLessons : []),
+    [teacherLessons]
+  );
   const normalizedHomeworks = useMemo(
-    () => (Array.isArray(homeworks) ? homeworks : []).map(normalizeHomework),
-    [homeworks]
+    () => (Array.isArray(teacherHomeworks) ? teacherHomeworks : []).map(normalizeHomework),
+    [teacherHomeworks]
   );
 
-  // курсы учителя: если бэк уже фильтрует — не режем
   const teacherCourses = useMemo(() => {
     const uid = String(user.id);
     const list = normalizedCourses;
@@ -537,37 +587,50 @@ export function TeacherDashboard() {
     });
   }, [normalizedCourses, user.id]);
 
-  const teacherCourseIds = useMemo(() => new Set(teacherCourses.map((c) => normalizeCourseId(c))), [teacherCourses]);
-
-  const teacherHomeworksActive = useMemo(
-    () => normalizedHomeworks.filter((hw) => teacherCourseIds.has(String(hw.courseId)) && !hw.isArchived),
-    [normalizedHomeworks, teacherCourseIds]
-  );
-  const teacherHomeworksArchived = useMemo(
-    () => normalizedHomeworks.filter((hw) => teacherCourseIds.has(String(hw.courseId)) && hw.isArchived),
-    [normalizedHomeworks, teacherCourseIds]
+  const teacherCourseIds = useMemo(
+    () => new Set(teacherCourses.map((c) => normalizeCourseId(c))),
+    [teacherCourses]
   );
 
-  const pendingCount = teacherHomeworksActive.filter((hw) => normLow(hw.status) === "submitted" || !normLow(hw.status)).length;
+  const homeworksSafe = useMemo(() => {
+    if (teacherCourseIds.size === 0) return normalizedHomeworks;
+    return normalizedHomeworks.filter((hw) => teacherCourseIds.has(String(hw.courseId)));
+  }, [normalizedHomeworks, teacherCourseIds]);
+
+  const teacherHomeworksActive = useMemo(() => {
+    return homeworksSafe.filter((hw) => !archivedIds.has(String(hw.id)));
+  }, [homeworksSafe, archivedIds]);
+
+  const teacherHomeworksArchived = useMemo(() => {
+    return homeworksSafe.filter((hw) => archivedIds.has(String(hw.id)));
+  }, [homeworksSafe, archivedIds]);
+
+  // pending = только submitted (если статус rework — учитель уже ответил, ждём студента)
+  const pendingCount = teacherHomeworksActive.filter(
+    (hw) => normLow(hw.status) === "submitted" || !normLow(hw.status)
+  ).length;
+
   const acceptedCount = teacherHomeworksActive.filter((hw) => normLow(hw.status) === "accepted").length;
 
   const filteredActive = useMemo(() => {
-    if (homeworkFilter === "submitted") return teacherHomeworksActive.filter((hw) => normLow(hw.status) === "submitted" || !normLow(hw.status));
-    if (homeworkFilter === "accepted") return teacherHomeworksActive.filter((hw) => normLow(hw.status) === "accepted");
+    if (homeworkFilter === "submitted")
+      return teacherHomeworksActive.filter((hw) => normLow(hw.status) === "submitted" || !normLow(hw.status));
+    if (homeworkFilter === "accepted")
+      return teacherHomeworksActive.filter((hw) => normLow(hw.status) === "accepted");
     return teacherHomeworksActive;
   }, [teacherHomeworksActive, homeworkFilter]);
 
   const groupedByStudent = useMemo(() => {
     const map = new Map();
     for (const hw of filteredActive) {
-      const sid = hw.userId;
+      const sid = hw.userId || "unknown";
       if (!map.has(sid)) map.set(sid, []);
       map.get(sid).push(hw);
     }
     for (const [sid, arr] of map.entries()) {
       arr.sort((a, b) => {
-        const pa = normLow(a.status) === "submitted" ? 0 : 1;
-        const pb = normLow(b.status) === "submitted" ? 0 : 1;
+        const pa = normLow(a.status) === "submitted" || !normLow(a.status) ? 0 : 1;
+        const pb = normLow(b.status) === "submitted" || !normLow(b.status) ? 0 : 1;
         return pa - pb;
       });
       map.set(sid, arr);
@@ -578,7 +641,7 @@ export function TeacherDashboard() {
   const groupedArchiveByStudent = useMemo(() => {
     const map = new Map();
     for (const hw of teacherHomeworksArchived) {
-      const sid = hw.userId;
+      const sid = hw.userId || "unknown";
       if (!map.has(sid)) map.set(sid, []);
       map.get(sid).push(hw);
     }
@@ -605,7 +668,7 @@ export function TeacherDashboard() {
   async function handleReview(homeworkId, status) {
     const comment = norm(comments[homeworkId]);
     if (!comment) {
-      toast.error("Добавьте комментарий к проверке");
+      toast.error("Комментарий обязателен (для студента это будет объяснение)");
       return;
     }
     if (!reviewHomework) {
@@ -619,7 +682,7 @@ export function TeacherDashboard() {
         toast.error(res?.error || "Не удалось сохранить проверку");
         return;
       }
-      toast.success("Домашнее задание обновлено");
+      toast.success("Проверка сохранена");
       setComments((prev) => ({ ...prev, [homeworkId]: "" }));
       await loadTeacherHomeworks?.();
     } catch (e) {
@@ -628,49 +691,39 @@ export function TeacherDashboard() {
     }
   }
 
+  function archiveLocal(hwId) {
+    const id = String(hwId);
+    const next = new Set(archivedIds);
+    next.add(id);
+    setArchivedIds(next);
+    setTeacherArchivedSet(user.id, next);
+  }
+
+  function unarchiveLocal(hwId) {
+    const id = String(hwId);
+    const next = new Set(archivedIds);
+    next.delete(id);
+    setArchivedIds(next);
+    setTeacherArchivedSet(user.id, next);
+  }
+
   async function handleArchive(hw) {
-    if (!archiveHomework) {
-      toast.error("Архивирование не подключено");
-      return;
-    }
     if (normLow(hw.status) !== "accepted") {
       toast.error("В архив можно отправить только «Принято»");
       return;
     }
-    try {
-      const res = await archiveHomework(hw.id);
-      if (res?.ok === false) {
-        toast.error(res?.error || "Не удалось архивировать");
-        return;
-      }
-      toast.success("Отправлено в архив");
-      await loadTeacherHomeworks?.();
-    } catch (e) {
-      console.error(e);
-      toast.error("Ошибка архивации");
-    }
+    archiveLocal(hw.id);
+    toast.success("Отправлено в архив");
   }
 
   async function handleUnarchive(hwId) {
-    if (!unarchiveHomework) {
-      toast.error("Разархивирование не подключено");
-      return;
-    }
-    try {
-      const res = await unarchiveHomework(hwId);
-      if (res?.ok === false) {
-        toast.error(res?.error || "Не удалось разархивировать");
-        return;
-      }
-      toast.success("Разархивировано");
-      await loadTeacherHomeworks?.();
-    } catch (e) {
-      console.error(e);
-      toast.error("Ошибка разархивации");
-    }
+    unarchiveLocal(hwId);
+    toast.success("Разархивировано");
   }
 
-  const toggleStudent = (studentId) => setExpandedStudents((prev) => ({ ...prev, [studentId]: !prev[studentId] }));
+  const toggleStudent = (studentId) =>
+    setExpandedStudents((prev) => ({ ...prev, [studentId]: !prev[studentId] }));
+
   const toggleArchiveStudent = (studentId) =>
     setExpandedArchiveStudents((prev) => ({ ...prev, [studentId]: !prev[studentId] }));
 
@@ -695,19 +748,17 @@ export function TeacherDashboard() {
     }
 
     try {
-      // максимально “терпимый” payload (бек проигнорит лишнее)
       const payload = {
         title,
         name: title,
         description: "",
-        categoryId: newCourseCategoryId || null,
-        category_id: newCourseCategoryId || null,
-        category: newCourseCategoryId || null,
+        categoryId: newCourseCategoryId || undefined,
+        category_id: newCourseCategoryId || undefined,
+        category: newCourseCategoryId || undefined,
       };
 
       const res = await addCourse(payload);
 
-      // addCourse может вернуть id, объект, data
       const cid =
         typeof res === "number" || typeof res === "string"
           ? res
@@ -718,8 +769,7 @@ export function TeacherDashboard() {
         return;
       }
 
-      await loadPublic?.(); // обязательно перезагрузить, чтобы новый курс появился
-
+      await loadPublic?.();
       toast.success("Курс добавлен");
       setAddForm((p) => ({ ...p, courseId: String(cid) }));
       setExpandedCourse(String(cid));
@@ -760,9 +810,9 @@ export function TeacherDashboard() {
         title,
         name: title,
         description: editCourseForm.description ?? "",
-        categoryId: editCourseForm.categoryId || null,
-        category_id: editCourseForm.categoryId || null,
-        category: editCourseForm.categoryId || null,
+        categoryId: editCourseForm.categoryId || undefined,
+        category_id: editCourseForm.categoryId || undefined,
+        category: editCourseForm.categoryId || undefined,
       };
 
       const res = await updateCourse(editCourseId, payload);
@@ -781,14 +831,26 @@ export function TeacherDashboard() {
   }
 
   /* =========================
-     Lessons (оставил твою логику, но без ломания)
+     Lessons
      ========================= */
   function openEditLesson(lesson) {
     const id = normalizeLessonId(lesson);
     setEditLessonId(id);
 
-    const backendVideo = norm(lesson?.youtubeVideoId ?? lesson?.youtube_video_id ?? lesson?.videoUrl ?? lesson?.video_url ?? "");
-    const backendHomeworkFileUrl = norm(lesson?.homeworkFile ?? lesson?.homework_file ?? lesson?.homeworkFileUrl ?? "");
+    const backendVideo = norm(
+      lesson?.youtubeVideoId ??
+        lesson?.youtube_video_id ??
+        lesson?.videoUrl ??
+        lesson?.video_url ??
+        ""
+    );
+
+    const backendHomeworkFileUrl = norm(
+      lesson?.homeworkFile ??
+        lesson?.homework_file ??
+        lesson?.homeworkFileUrl ??
+        ""
+    );
 
     setEditForm({
       title: normalizeLessonTitle(lesson),
@@ -834,51 +896,6 @@ export function TeacherDashboard() {
     toast.success("Видео выбрано (превью)");
   }
 
-  async function saveEditLesson() {
-    if (!editLessonId) return;
-    if (!updateLesson) {
-      toast.error("updateLesson не подключён в DataContext");
-      return;
-    }
-
-    const videoInput = norm(editForm.videoInput);
-    const hasVideo = !!videoInput || !!editForm.videoPreviewUrl;
-
-    if (!hasVideo) {
-      toast.error("Укажите ссылку/ID или выберите видео");
-      return;
-    }
-
-    const payload = {
-      title: norm(editForm.title),
-      description: norm(editForm.description),
-      youtube_video_id: videoInput,
-      youtubeVideoId: videoInput,
-      video_url: videoInput,
-      videoUrl: videoInput,
-      homework_description: norm(editForm.homeworkDescription),
-      homeworkDescription: norm(editForm.homeworkDescription),
-      homework_file: editForm.homeworkFile || null,
-      homeworkFile: editForm.homeworkFile || null,
-      video_file: editForm.videoFile || null,
-      videoFile: editForm.videoFile || null,
-    };
-
-    try {
-      const res = await updateLesson(editLessonId, payload);
-      if (res?.ok === false) {
-        toast.error(res?.error || "Не удалось обновить урок");
-        return;
-      }
-      toast.success("Урок обновлён");
-      cancelEditLesson();
-      await loadTeacherLessons?.();
-    } catch (e) {
-      console.error(e);
-      toast.error("Ошибка обновления урока");
-    }
-  }
-
   function onPickAddVideo(file) {
     if (!file) return;
     if (addForm.videoPreviewUrl?.startsWith("blob:")) {
@@ -889,6 +906,80 @@ export function TeacherDashboard() {
     const url = URL.createObjectURL(file);
     setAddForm((p) => ({ ...p, videoFile: file, videoPreviewUrl: url }));
     toast.success("Видео выбрано (превью)");
+  }
+
+  function buildLessonPayload(form, { courseId }) {
+    const payload = {};
+
+    const title = norm(form.title);
+    const description = norm(form.description);
+    const videoInput = norm(form.videoInput);
+    const homeworkDescription = norm(form.homeworkDescription);
+
+    if (courseId) {
+      payload.course = String(courseId);
+      payload.course_id = String(courseId);
+      payload.courseId = String(courseId);
+    }
+
+    if (title) payload.title = title;
+    if (description) payload.description = description;
+
+    if (videoInput) {
+      payload.youtube_video_id = videoInput;
+      payload.youtubeVideoId = videoInput;
+      payload.video_url = videoInput;
+      payload.videoUrl = videoInput;
+    }
+
+    if (homeworkDescription) {
+      payload.homework_description = homeworkDescription;
+      payload.homeworkDescription = homeworkDescription;
+    }
+
+    if (form.videoFile) {
+      payload.video_file = form.videoFile;
+      payload.videoFile = form.videoFile;
+    }
+
+    if (form.homeworkFile) {
+      payload.homework_file = form.homeworkFile;
+      payload.homeworkFile = form.homeworkFile;
+    }
+
+    return payload;
+  }
+
+  async function saveEditLesson() {
+    if (!editLessonId) return;
+    if (!updateLesson) {
+      toast.error("updateLesson не подключён в DataContext");
+      return;
+    }
+
+    const videoInput = norm(editForm.videoInput);
+    const hasVideo = !!videoInput || !!editForm.videoFile || !!editForm.videoPreviewUrl;
+    if (!hasVideo) {
+      toast.error("Укажите ссылку/ID или выберите видео");
+      return;
+    }
+
+    try {
+      const payload = buildLessonPayload(editForm, { courseId: null });
+      const res = await updateLesson(editLessonId, payload);
+
+      if (res?.ok === false) {
+        toast.error(res?.error || "Не удалось обновить урок");
+        return;
+      }
+
+      toast.success("Урок обновлён");
+      cancelEditLesson();
+      await loadTeacherLessons?.();
+    } catch (e) {
+      console.error(e);
+      toast.error("Ошибка обновления урока");
+    }
   }
 
   async function handleAddLesson() {
@@ -903,37 +994,16 @@ export function TeacherDashboard() {
     }
 
     const videoInput = norm(addForm.videoInput);
-    const hasVideo = !!videoInput || !!addForm.videoPreviewUrl;
+    const hasVideo = !!videoInput || !!addForm.videoFile || !!addForm.videoPreviewUrl;
     if (!hasVideo) {
       toast.error("Укажите ссылку/ID или выберите видео");
       return;
     }
 
-    const payload = {
-      course: cid,
-      course_id: cid,
-      courseId: cid,
-
-      title: norm(addForm.title),
-      description: norm(addForm.description),
-
-      youtube_video_id: videoInput,
-      youtubeVideoId: videoInput,
-      video_url: videoInput,
-      videoUrl: videoInput,
-
-      homework_description: norm(addForm.homeworkDescription),
-      homeworkDescription: norm(addForm.homeworkDescription),
-
-      homework_file: addForm.homeworkFile || null,
-      homeworkFile: addForm.homeworkFile || null,
-
-      video_file: addForm.videoFile || null,
-      videoFile: addForm.videoFile || null,
-    };
-
     try {
+      const payload = buildLessonPayload(addForm, { courseId: cid });
       const res = await addLesson(payload);
+
       if (res?.ok === false) {
         toast.error(res?.error || "Не удалось добавить урок");
         return;
@@ -961,14 +1031,6 @@ export function TeacherDashboard() {
     }
   }
 
-  function canPlayVideo(url) {
-    const u = norm(url);
-    if (!u) return false;
-    if (u.startsWith("blob:")) return true;
-    if (u.startsWith("http://") || u.startsWith("https://")) return true;
-    return false;
-  }
-
   const categoriesOptions = useMemo(() => {
     const base = Array.isArray(categories) ? categories : [];
     return base
@@ -988,16 +1050,17 @@ export function TeacherDashboard() {
       .filter((x) => x.value && x.label);
   }, [teacherCourses]);
 
-  const isAnyLoading = !!loading?.public || !!loading?.teacherLessons || !!loading?.teacherHomeworks || false;
+  const isAnyLoading =
+    !!loading?.public || !!loading?.teacherLessons || !!loading?.teacherHomeworks || false;
+
   const anyError = error?.public || error?.teacherLessons || error?.teacherHomeworks || "";
 
   const lessonsByCourse = useCallback(
     (courseId) => {
-      if (getLessonsByCourse) return getLessonsByCourse(courseId) || [];
       const cid = String(courseId);
       return normalizedLessons.filter((l) => normalizeLessonCourseId(l) === cid);
     },
-    [getLessonsByCourse, normalizedLessons]
+    [normalizedLessons]
   );
 
   return (
@@ -1097,9 +1160,10 @@ export function TeacherDashboard() {
               </Card>
             ) : (
               Array.from(groupedByStudent.entries()).map(([studentId, list]) => {
-                const student = findUserById?.(studentId);
                 const isOpen = !!expandedStudents[studentId];
-                const submitted = list.filter((x) => normLow(x.status) === "submitted" || !normLow(x.status)).length;
+                const submitted = list.filter(
+                  (x) => normLow(x.status) === "submitted" || !normLow(x.status)
+                ).length;
 
                 return (
                   <Card key={studentId}>
@@ -1111,7 +1175,7 @@ export function TeacherDashboard() {
                       >
                         <div className="text-left">
                           <div className="font-semibold">
-                            {student?.name || student?.username || list?.[0]?.studentUsername || "Студент"}{" "}
+                            {list?.[0]?.studentUsername || "Студент"}{" "}
                             <span className="text-gray-500 font-normal">({studentId})</span>
                           </div>
                           <div className="text-sm text-gray-600">
@@ -1124,21 +1188,27 @@ export function TeacherDashboard() {
                       {isOpen && (
                         <div className="mt-5 space-y-4">
                           {list.map((hw) => {
-                            const courseDetails = getCourseWithDetails?.(hw.courseId);
-                            const lesson = normalizedLessons.find((l) => normalizeLessonId(l) === String(hw.lessonId));
+                            const lesson = normalizedLessons.find(
+                              (l) => normalizeLessonId(l) === String(hw.lessonId)
+                            );
                             const comment = comments[hw.id] || "";
+                            const canReview = isTeacherCanReview(hw.status);
 
                             return (
                               <div key={hw.id} className="border rounded-lg p-4 bg-white">
                                 <div className="flex items-start justify-between gap-4">
                                   <div>
                                     <div className="font-semibold">
-                                      {courseDetails?.title || hw.courseTitle || "Курс"} •{" "}
-                                      {normalizeLessonTitle(lesson) || hw.lessonTitle || `Урок ${hw.lessonId}`}
+                                      {hw.courseTitle || "Курс"} •{" "}
+                                      {normalizeLessonTitle(lesson) ||
+                                        hw.lessonTitle ||
+                                        `Урок ${hw.lessonId}`}
                                     </div>
                                     <div className="text-xs text-gray-500 mt-1">
                                       Отправлено:{" "}
-                                      {hw.createdAt ? new Date(hw.createdAt).toLocaleDateString() : "—"}
+                                      {hw.createdAt
+                                        ? new Date(hw.createdAt).toLocaleDateString()
+                                        : "—"}
                                     </div>
                                   </div>
                                   <StatusBadge status={hw.status} />
@@ -1152,11 +1222,18 @@ export function TeacherDashboard() {
                                   <AttachmentsView attachments={hw.attachments} />
                                 </div>
 
-                                {(normLow(hw.status) === "submitted" || !normLow(hw.status)) && (
+                                {hw.teacherComment ? (
+                                  <div className="mt-4 p-3 bg-blue-50 rounded">
+                                    <div className="text-sm font-medium mb-1">Комментарий преподавателя:</div>
+                                    <div className="text-sm whitespace-pre-wrap">{hw.teacherComment}</div>
+                                  </div>
+                                ) : null}
+
+                                {canReview ? (
                                   <div className="mt-4 space-y-3">
                                     <Textarea
                                       rows={3}
-                                      placeholder="Комментарий к проверке..."
+                                      placeholder="Комментарий (обязательно)"
                                       value={comment}
                                       onChange={(e) => setCommentFor(hw.id, e.target.value)}
                                     />
@@ -1177,22 +1254,24 @@ export function TeacherDashboard() {
                                         На доработку
                                       </Button>
 
-                                      <Button onClick={() => handleReview(hw.id, "declined")} variant="destructive">
+                                      <Button
+                                        onClick={() => handleReview(hw.id, "declined")}
+                                        variant="destructive"
+                                      >
                                         <XCircle className="w-4 h-4 mr-2" />
                                         Отклонить
                                       </Button>
                                     </div>
-                                  </div>
-                                )}
 
-                                {hw.teacherComment ? (
-                                  <div className="mt-4 p-3 bg-blue-50 rounded">
-                                    <div className="text-sm font-medium mb-1">Комментарий преподавателя:</div>
-                                    <div className="text-sm whitespace-pre-wrap">{hw.teacherComment}</div>
+                                    {normLow(hw.status) === "rework" ? (
+                                      <div className="text-xs text-gray-600">
+                                        Если студент исправит и отправит снова — статус должен вернуться в <b>На проверке</b>.
+                                      </div>
+                                    ) : null}
                                   </div>
                                 ) : null}
 
-                                {normLow(hw.status) === "accepted" && archiveHomework ? (
+                                {normLow(hw.status) === "accepted" ? (
                                   <div className="mt-4">
                                     <Button variant="outline" onClick={() => handleArchive(hw)}>
                                       <Archive className="w-4 h-4 mr-2" />
@@ -1242,16 +1321,33 @@ export function TeacherDashboard() {
                           className="flex-1 text-left"
                           type="button"
                         >
-                          <CardTitle className="text-xl">{normalizeCourseTitle(course)}</CardTitle>
+                          <CardTitle className="text-xl">
+                            {normalizeCourseTitle(course) || "Курс"}
+                          </CardTitle>
                           <p className="text-sm text-gray-600 mt-2">
-                            {(normalizeCategoryName(course) || "Без категории") + " • " + courseLessons.length + " уроков"}
+                            {(normalizeCategoryName(course) || "Без категории") +
+                              " • " +
+                              courseLessons.length +
+                              " уроков"}
                           </p>
                           {course?.description ? (
-                            <p className="text-sm text-gray-700 mt-2 line-clamp-2">{course.description}</p>
+                            <p className="text-sm text-gray-700 mt-2 line-clamp-2">
+                              {course.description}
+                            </p>
                           ) : null}
                         </button>
 
                         <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openEditCourse(course)}
+                          >
+                            <FolderPen className="w-4 h-4 mr-2" />
+                            Курс
+                          </Button>
+
                           <button
                             onClick={() => setExpandedCourse(isOpen ? null : courseId)}
                             className="p-2 rounded-xl hover:bg-gray-100 transition"
@@ -1274,7 +1370,13 @@ export function TeacherDashboard() {
                             const previewUrl = isEditing ? editForm.videoPreviewUrl : "";
                             const showUrl = isEditing
                               ? norm(editForm.videoInput)
-                              : norm(l?.youtubeVideoId ?? l?.youtube_video_id ?? l?.videoUrl ?? l?.video_url ?? "");
+                              : norm(
+                                  l?.youtubeVideoId ??
+                                    l?.youtube_video_id ??
+                                    l?.videoUrl ??
+                                    l?.video_url ??
+                                    ""
+                                );
 
                             const orderLabel = l?.order ? l.order : idx + 1;
 
@@ -1282,9 +1384,13 @@ export function TeacherDashboard() {
                               <div key={lid} className="border rounded-lg p-4 bg-white">
                                 <div className="flex items-start justify-between gap-3">
                                   <div className="font-semibold">
-                                    {orderLabel}. {normalizeLessonTitle(l)}
+                                    {orderLabel}. {normalizeLessonTitle(l) || "Урок"}
                                   </div>
-                                  <Button variant="outline" size="sm" onClick={() => openEditLesson(l)}>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => openEditLesson(l)}
+                                  >
                                     <Pencil className="w-4 h-4 mr-2" />
                                     Редактировать
                                   </Button>
@@ -1309,7 +1415,8 @@ export function TeacherDashboard() {
 
                                 {showUrl ? (
                                   <div className="mt-3 text-xs text-gray-600 break-all">
-                                    Видео (URL/ID): <span className="text-gray-900">{showUrl}</span>
+                                    Видео (URL/ID):{" "}
+                                    <span className="text-gray-900">{showUrl}</span>
                                   </div>
                                 ) : null}
 
@@ -1323,7 +1430,9 @@ export function TeacherDashboard() {
                                       <label className="text-sm">Название</label>
                                       <Input
                                         value={editForm.title}
-                                        onChange={(e) => setEditForm((p) => ({ ...p, title: e.target.value }))}
+                                        onChange={(e) =>
+                                          setEditForm((p) => ({ ...p, title: e.target.value }))
+                                        }
                                       />
                                     </div>
 
@@ -1332,7 +1441,9 @@ export function TeacherDashboard() {
                                       <Textarea
                                         rows={3}
                                         value={editForm.description}
-                                        onChange={(e) => setEditForm((p) => ({ ...p, description: e.target.value }))}
+                                        onChange={(e) =>
+                                          setEditForm((p) => ({ ...p, description: e.target.value }))
+                                        }
                                       />
                                     </div>
 
@@ -1340,7 +1451,9 @@ export function TeacherDashboard() {
                                       <label className="text-sm">Ссылка или ID</label>
                                       <Input
                                         value={editForm.videoInput}
-                                        onChange={(e) => setEditForm((p) => ({ ...p, videoInput: e.target.value }))}
+                                        onChange={(e) =>
+                                          setEditForm((p) => ({ ...p, videoInput: e.target.value }))
+                                        }
                                         placeholder="https://youtu.be/... или dQw4w9WgXcQ"
                                       />
                                     </div>
@@ -1371,7 +1484,10 @@ export function TeacherDashboard() {
                                         rows={2}
                                         value={editForm.homeworkDescription}
                                         onChange={(e) =>
-                                          setEditForm((p) => ({ ...p, homeworkDescription: e.target.value }))
+                                          setEditForm((p) => ({
+                                            ...p,
+                                            homeworkDescription: e.target.value,
+                                          }))
                                         }
                                       />
                                     </div>
@@ -1526,7 +1642,6 @@ export function TeacherDashboard() {
               </Card>
             ) : (
               Array.from(groupedArchiveByStudent.entries()).map(([studentId, list]) => {
-                const student = findUserById?.(studentId);
                 const isOpen = !!expandedArchiveStudents[studentId];
 
                 return (
@@ -1539,7 +1654,7 @@ export function TeacherDashboard() {
                       >
                         <div className="text-left">
                           <div className="font-semibold">
-                            {student?.name || student?.username || list?.[0]?.studentUsername || "Студент"}{" "}
+                            {list?.[0]?.studentUsername || "Студент"}{" "}
                             <span className="text-gray-500 font-normal">({studentId})</span>
                           </div>
                           <div className="text-sm text-gray-600">В архиве: {list.length}</div>
@@ -1550,20 +1665,25 @@ export function TeacherDashboard() {
                       {isOpen && (
                         <div className="mt-5 space-y-3">
                           {list.map((hw) => {
-                            const courseDetails = getCourseWithDetails?.(hw.courseId);
-                            const lesson = normalizedLessons.find((l) => normalizeLessonId(l) === String(hw.lessonId));
+                            const lesson = normalizedLessons.find(
+                              (l) => normalizeLessonId(l) === String(hw.lessonId)
+                            );
 
                             return (
                               <div key={hw.id} className="border rounded-lg p-4 bg-white">
                                 <div className="flex items-start justify-between gap-4">
                                   <div>
                                     <div className="font-semibold">
-                                      {courseDetails?.title || hw.courseTitle || "Курс"} •{" "}
-                                      {normalizeLessonTitle(lesson) || hw.lessonTitle || `Урок ${hw.lessonId}`}
+                                      {hw.courseTitle || "Курс"} •{" "}
+                                      {normalizeLessonTitle(lesson) ||
+                                        hw.lessonTitle ||
+                                        `Урок ${hw.lessonId}`}
                                     </div>
                                     <div className="text-xs text-gray-500 mt-1">
                                       Проверено:{" "}
-                                      {hw.reviewedAt ? new Date(hw.reviewedAt).toLocaleDateString() : "—"}
+                                      {hw.reviewedAt
+                                        ? new Date(hw.reviewedAt).toLocaleDateString()
+                                        : "—"}
                                     </div>
                                   </div>
                                   <StatusBadge status={hw.status} />
@@ -1582,14 +1702,12 @@ export function TeacherDashboard() {
                                   </div>
                                 ) : null}
 
-                                {unarchiveHomework ? (
-                                  <div className="mt-4">
-                                    <Button variant="outline" onClick={() => handleUnarchive(hw.id)}>
-                                      <Undo2 className="w-4 h-4 mr-2" />
-                                      Разархивировать
-                                    </Button>
-                                  </div>
-                                ) : null}
+                                <div className="mt-4">
+                                  <Button variant="outline" onClick={() => handleUnarchive(hw.id)}>
+                                    <Undo2 className="w-4 h-4 mr-2" />
+                                    Разархивировать
+                                  </Button>
+                                </div>
                               </div>
                             );
                           })}
@@ -1608,7 +1726,11 @@ export function TeacherDashboard() {
           <div className="space-y-3">
             <div className="space-y-1">
               <label className="text-sm">Название курса</label>
-              <Input value={newCourseTitle} onChange={(e) => setNewCourseTitle(e.target.value)} placeholder="React с нуля" />
+              <Input
+                value={newCourseTitle}
+                onChange={(e) => setNewCourseTitle(e.target.value)}
+                placeholder="React с нуля"
+              />
             </div>
 
             <div className="space-y-1">
@@ -1679,3 +1801,5 @@ export function TeacherDashboard() {
     </div>
   );
 }
+
+export default TeacherDashboard;

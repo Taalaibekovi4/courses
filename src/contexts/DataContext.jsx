@@ -12,9 +12,9 @@ import axios from "axios";
 
 /**
  * .env:
- * VITE_API_URL=https://vostok-massage.webtm.ru/api/
+ * VITE_API_URL=http://127.0.0.1:8000/api/
  *
- * baseURL должен быть без двойных слэшей.
+ * baseURL должен быть без хвостового "/".
  */
 const rawBase =
   (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) ||
@@ -33,13 +33,13 @@ function getAccessToken() {
   }
 }
 
-function setAccessToken(token) {
+export function setAccessToken(token) {
   try {
     if (token) localStorage.setItem(LS_ACCESS, token);
   } catch (_) {}
 }
 
-function clearAccessToken() {
+export function clearAccessToken() {
   try {
     localStorage.removeItem(LS_ACCESS);
   } catch (_) {}
@@ -125,10 +125,6 @@ async function tryMany(requests) {
   return { ok: false, error: lastErr };
 }
 
-function getLessonCourseId(lesson) {
-  return String(lesson?.course ?? lesson?.course_id ?? lesson?.courseId ?? "");
-}
-
 function pickVideoFields(data) {
   const d = data || {};
   const out = {};
@@ -136,6 +132,8 @@ function pickVideoFields(data) {
     "video_url",
     "videoUrl",
     "video",
+    "file_url",
+    "fileUrl",
     "youtube_video_id",
     "youtubeVideoId",
     "youtube_id",
@@ -145,6 +143,117 @@ function pickVideoFields(data) {
     if (d?.[k] != null && d?.[k] !== "") out[k] = d[k];
   });
   return out;
+}
+
+function pickBestVideoUrl(obj) {
+  const o = obj || {};
+  return (
+    o.video_url ||
+    o.videoUrl ||
+    o.video ||
+    o.file_url ||
+    o.fileUrl ||
+    o.youtube_video_id ||
+    o.youtubeVideoId ||
+    o.youtube_id ||
+    o.youtubeId ||
+    ""
+  );
+}
+
+/**
+ * ✅ НОРМАЛИЗАЦИЯ me/courses/
+ * Бэк может вернуть:
+ * A) обычный список курсов [{id,title,...}]
+ * B) список доступов [{ access:{course, course_title...}, lessons:[...] }]
+ */
+function extractCourseIdFromAny(x) {
+  const candidates = [
+    x?.id,
+    x?.course,
+    x?.course_id,
+    x?.courseId,
+    x?.course_pk,
+
+    x?.access?.course,
+    x?.access?.course_id,
+    x?.access?.courseId,
+    x?.access?.course_pk,
+
+    x?.course_detail?.id,
+    x?.course_detail?.course_id,
+    x?.course_detail?.courseId,
+
+    // если вдруг уроки содержат course (иногда так бывает)
+    x?.lessons?.[0]?.course,
+    x?.lessons?.[0]?.course_id,
+    x?.lessons?.[0]?.courseId,
+  ];
+
+  for (const c of candidates) {
+    const s = String(c ?? "").trim();
+    if (s && s !== "0" && s !== "null" && s !== "undefined") return s;
+  }
+  return "";
+}
+
+function extractCourseTitleFromAny(x) {
+  const candidates = [
+    x?.title,
+    x?.name,
+    x?.course_title,
+    x?.courseTitle,
+    x?.access?.course_title,
+    x?.access?.courseTitle,
+  ];
+  for (const c of candidates) {
+    const s = String(c ?? "").trim();
+    if (s) return s;
+  }
+  return "Курс";
+}
+
+function normalizeMyCourses(raw) {
+  const list = asList(raw);
+  const arr = Array.isArray(list) ? list : [];
+
+  // case B: access + lessons
+  const looksLikeAccessShape =
+    arr.length > 0 &&
+    typeof arr[0] === "object" &&
+    arr[0] &&
+    ("access" in arr[0] || "lessons" in arr[0]);
+
+  if (!looksLikeAccessShape) {
+    // case A: обычные курсы
+    return arr
+      .filter((c) => {
+        const cid = extractCourseIdFromAny(c);
+        return !!cid;
+      })
+      .map((c) => {
+        const cid = extractCourseIdFromAny(c);
+        return { ...c, id: cid, course_id: cid };
+      });
+  }
+
+  // case B: нормализуем в курсы
+  return arr
+    .map((item) => {
+      const cid = extractCourseIdFromAny(item);
+      const title = extractCourseTitleFromAny(item);
+      const lessons = Array.isArray(item?.lessons) ? item.lessons : [];
+
+      return {
+        id: cid, // важно для UI
+        course_id: cid,
+        title,
+        name: title,
+        access: item?.access || null,
+        lessons,
+      };
+    })
+    .filter((c) => !!String(c?.id || "").trim());
 }
 
 const DataContext = createContext(null);
@@ -159,18 +268,19 @@ export function DataProvider({ children }) {
   const [teacherLessons, setTeacherLessons] = useState([]);
   const [teacherHomeworks, setTeacherHomeworks] = useState([]);
 
-  // student (me/*)
+  // student
   const [myCourses, setMyCourses] = useState([]);
   const [myHomeworks, setMyHomeworks] = useState([]);
 
-  // lessons per course (student)
-  const [lessonsByCourse, setLessonsByCourse] = useState({});
+  // video/open cache
   const [openedLessons, setOpenedLessons] = useState({});
-
   const openedLessonsRef = useRef({});
   useEffect(() => {
     openedLessonsRef.current = openedLessons || {};
   }, [openedLessons]);
+
+  // public lessons fallback (если нужно)
+  const [lessonsByCourse, setLessonsByCourse] = useState({});
 
   const [loading, setLoading] = useState({
     public: false,
@@ -205,9 +315,9 @@ export function DataProvider({ children }) {
     setError((p) => ({ ...p, public: "" }));
     try {
       const [catsRes, coursesRes, tariffsRes] = await Promise.all([
-        api.get("/categories/").catch((e) => ({ __err: e })),
-        api.get("/courses/").catch((e) => ({ __err: e })),
-        api.get("/tariffs/").catch((e) => ({ __err: e })),
+        api.get("categories/").catch((e) => ({ __err: e })),
+        api.get("courses/").catch((e) => ({ __err: e })),
+        api.get("tariffs/").catch((e) => ({ __err: e })),
       ]);
 
       if (catsRes?.__err) throw catsRes.__err;
@@ -233,7 +343,7 @@ export function DataProvider({ children }) {
     setLoading((p) => ({ ...p, teacherLessons: true }));
     setError((p) => ({ ...p, teacherLessons: "" }));
     try {
-      const res = await api.get("/teacher/lessons/");
+      const res = await api.get("teacher/lessons/");
       setTeacherLessons(asList(res.data));
       return true;
     } catch (e) {
@@ -249,7 +359,7 @@ export function DataProvider({ children }) {
     setLoading((p) => ({ ...p, teacherHomeworks: true }));
     setError((p) => ({ ...p, teacherHomeworks: "" }));
     try {
-      const res = await api.get("/teacher/homeworks/");
+      const res = await api.get("teacher/homeworks/");
       setTeacherHomeworks(asList(res.data));
       return true;
     } catch (e) {
@@ -262,22 +372,22 @@ export function DataProvider({ children }) {
   }, []);
 
   /* =========================
-   * STUDENT (ME/*)
+   * STUDENT
    * ========================= */
   const loadMyCourses = useCallback(async () => {
     setLoading((p) => ({ ...p, myCourses: true }));
     setError((p) => ({ ...p, myCourses: "" }));
 
     try {
-      const res = await api.get("/me/courses/");
-      const list = asList(res.data);
-      setMyCourses(list);
-      return { ok: true, data: res.data };
+      const res = await api.get("me/courses/");
+      const normalized = normalizeMyCourses(res.data);
+      setMyCourses(normalized);
+      return { ok: true, data: res.data, list: normalized };
     } catch (e) {
       const msg = getErrMsg(e);
       setError((p) => ({ ...p, myCourses: msg }));
       setMyCourses([]);
-      return { ok: false, error: msg };
+      return { ok: false, error: msg, list: [] };
     } finally {
       setLoading((p) => ({ ...p, myCourses: false }));
     }
@@ -288,7 +398,7 @@ export function DataProvider({ children }) {
     setError((p) => ({ ...p, myHomeworks: "" }));
 
     try {
-      const res = await api.get("/me/homeworks/");
+      const res = await api.get("me/homeworks/");
       setMyHomeworks(asList(res.data));
       return { ok: true, data: res.data };
     } catch (e) {
@@ -301,9 +411,6 @@ export function DataProvider({ children }) {
     }
   }, []);
 
-  /**
-   * Активировать токен: POST /api/access/activate-token/
-   */
   const activateToken = useCallback(
     async (token) => {
       setLoading((p) => ({ ...p, activateToken: true }));
@@ -311,8 +418,9 @@ export function DataProvider({ children }) {
 
       try {
         const payload = { token: norm(token) };
-        const res = await api.post("/access/activate-token/", payload);
+        const res = await api.post("access/activate-token/", payload);
 
+        // ✅ сразу после активации подтягиваем список курсов/уроков
         await loadMyCourses();
         await loadMyHomeworks();
 
@@ -329,12 +437,7 @@ export function DataProvider({ children }) {
   );
 
   /**
-   * ✅ ВАЖНО: у тебя эндпоинт один: GET /api/lessons/
-   * И фильтр ?course= может НЕ работать.
-   *
-   * Поэтому:
-   * 1) пробуем /lessons/?course=<id>
-   * 2) если пусто или ошибка — грузим /lessons/ и фильтруем на фронте
+   * Публичные уроки (fallback). Обычно не нужны, если me/courses/ отдаёт lessons.
    */
   const loadLessonsPublicByCourse = useCallback(async (courseId) => {
     const cid = norm(courseId);
@@ -346,24 +449,14 @@ export function DataProvider({ children }) {
     }));
 
     try {
-      // 1) пробуем фильтр
-      let list = [];
-      const first = await tryMany([
-        () => api.get("/lessons/", { params: { course: cid } }),
-        () => api.get("/lessons/", { params: { course_id: cid } }),
-        () => api.get("/lessons/", { params: { courseId: cid } }),
+      const attempt = await tryMany([
+        () => api.get("lessons/", { params: { course_id: cid } }),
+        () => api.get("lessons/", { params: { courseId: cid } }),
+        () => api.get("lessons/", { params: { course: cid } }),
       ]);
 
-      if (first.ok) list = asList(first.res.data);
-
-      // 2) fallback: грузим всё и фильтруем
-      if (!Array.isArray(list) || list.length === 0) {
-        const allRes = await api.get("/lessons/");
-        const all = asList(allRes.data);
-        list = (Array.isArray(all) ? all : []).filter((l) => getLessonCourseId(l) === cid);
-      }
-
-      setLessonsByCourse((prev) => ({ ...(prev || {}), [cid]: list }));
+      const list = attempt.ok ? asList(attempt.res.data) : [];
+      setLessonsByCourse((prev) => ({ ...(prev || {}), [cid]: Array.isArray(list) ? list : [] }));
       return { ok: true, data: list };
     } catch (e) {
       setLessonsByCourse((prev) => ({ ...(prev || {}), [cid]: [] }));
@@ -377,8 +470,7 @@ export function DataProvider({ children }) {
   }, []);
 
   /**
-   * Открыть урок (получить видео): POST /api/lessons/open/ { lesson_id }
-   * ✅ делаем устойчиво: видео может быть в data, а lesson внутри data.lesson
+   * Открыть урок: POST lessons/open/
    */
   const openLesson = useCallback(async (lessonId, { force = false } = {}) => {
     const idNum = Number(lessonId);
@@ -394,7 +486,7 @@ export function DataProvider({ children }) {
     }));
 
     try {
-      const attempt = await tryMany([() => api.post("/lessons/open/", { lesson_id: idNum })]);
+      const attempt = await tryMany([() => api.post("lessons/open/", { lesson_id: idNum })]);
       if (!attempt.ok) throw attempt.error;
 
       const data = attempt.res?.data || null;
@@ -406,11 +498,24 @@ export function DataProvider({ children }) {
           ? data
           : null;
 
-      const lessonObj = baseLesson ? { ...baseLesson, ...pickVideoFields(data) } : null;
+      if (!baseLesson) return { ok: true, data, lesson: null };
 
-      if (lessonObj) {
-        setOpenedLessons((prev) => ({ ...(prev || {}), [key]: lessonObj }));
-      }
+      const merged = { ...baseLesson, ...pickVideoFields(data) };
+      const best = pickBestVideoUrl(merged);
+      const lessonObj = { ...merged, __picked_video: best };
+
+      setOpenedLessons((prev) => ({ ...(prev || {}), [key]: lessonObj }));
+
+      // ✅ чтобы is_opened обновился на UI без ожидания
+      setMyCourses((prev) =>
+        (Array.isArray(prev) ? prev : []).map((c) => {
+          const lessons = Array.isArray(c?.lessons) ? c.lessons : [];
+          const nextLessons = lessons.map((l) =>
+            String(l?.id ?? l?.pk ?? "") === key ? { ...l, is_opened: true } : l
+          );
+          return { ...c, lessons: nextLessons };
+        })
+      );
 
       return { ok: true, data, lesson: lessonObj };
     } catch (e) {
@@ -424,7 +529,7 @@ export function DataProvider({ children }) {
   }, []);
 
   /**
-   * Отправить ДЗ: POST /api/homeworks/
+   * Отправить ДЗ: POST homeworks/
    */
   const submitHomework = useCallback(
     async ({ lessonId, content }) => {
@@ -438,7 +543,7 @@ export function DataProvider({ children }) {
           content: norm(content),
         };
 
-        const res = await api.post("/homeworks/", payload);
+        const res = await api.post("homeworks/", payload);
         await loadMyHomeworks();
         return { ok: true, data: res.data };
       } catch (e) {
@@ -451,23 +556,32 @@ export function DataProvider({ children }) {
   );
 
   /* =========================
-   * TEACHER ACTIONS
+   * TEACHER ACTIONS (минимум)
    * ========================= */
-
   const reviewHomework = useCallback(async (homeworkId, status, comment) => {
     try {
       const id = String(homeworkId);
 
       const attempt = await tryMany([
-        () => api.patch(`/teacher/homeworks/${encodeURIComponent(id)}/`, { status, comment: comment ?? null }),
-        () => api.patch(`/teacher/homeworks/${encodeURIComponent(id)}`, { status, comment: comment ?? null }),
+        () =>
+          api.patch(`teacher/homeworks/${encodeURIComponent(id)}/`, {
+            status,
+            comment: comment ?? null,
+          }),
+        () =>
+          api.patch(`teacher/homeworks/${encodeURIComponent(id)}`, {
+            status,
+            comment: comment ?? null,
+          }),
       ]);
 
       if (!attempt.ok) throw attempt.error;
 
       const res = attempt.res;
       setTeacherHomeworks((prev) =>
-        (Array.isArray(prev) ? prev : []).map((h) => (String(h?.id) === id ? { ...h, ...res.data } : h))
+        (Array.isArray(prev) ? prev : []).map((h) =>
+          String(h?.id) === id ? { ...h, ...res.data } : h
+        )
       );
 
       return { ok: true, data: res.data };
@@ -476,7 +590,6 @@ export function DataProvider({ children }) {
     }
   }, []);
 
-  // Эти 2 эндпоинта у тебя НЕТ в списке — оставляю как "мягкие" (чтобы TeacherDashboard не падал)
   const archiveHomework = useCallback(async () => {
     return { ok: false, error: "Архивирование ДЗ: эндпоинт не найден на бэке" };
   }, []);
@@ -484,7 +597,6 @@ export function DataProvider({ children }) {
     return { ok: false, error: "Разархивирование ДЗ: эндпоинт не найден на бэке" };
   }, []);
 
-  // lesson create-with-upload существует: /teacher/lessons/create-with-upload/
   const addLesson = useCallback(
     async (payload) => {
       try {
@@ -493,8 +605,8 @@ export function DataProvider({ children }) {
         const body = needsFD ? buildFormData(p) : p;
 
         const attempt = await tryMany([
-          () => api.post("/teacher/lessons/create-with-upload/", body),
-          () => api.post("/teacher/lessons/", body),
+          () => api.post("teacher/lessons/create-with-upload/", body),
+          () => api.post("teacher/lessons/", body),
         ]);
 
         if (!attempt.ok) throw attempt.error;
@@ -519,8 +631,8 @@ export function DataProvider({ children }) {
         const body = needsFD ? buildFormData(p) : p;
 
         const attempt = await tryMany([
-          () => api.patch(`/teacher/lessons/${encodeURIComponent(id)}/`, body),
-          () => api.patch(`/teacher/lessons/${encodeURIComponent(id)}`, body),
+          () => api.patch(`teacher/lessons/${encodeURIComponent(id)}/`, body),
+          () => api.patch(`teacher/lessons/${encodeURIComponent(id)}`, body),
         ]);
 
         if (!attempt.ok) throw attempt.error;
@@ -534,11 +646,10 @@ export function DataProvider({ children }) {
     [loadTeacherLessons]
   );
 
-  // курсы учителя у тебя отдельного эндпоинта нет — оставляю мягко через /courses/
   const addCourse = useCallback(
     async (payload) => {
       try {
-        const attempt = await tryMany([() => api.post("/courses/", payload), () => api.post("/courses", payload)]);
+        const attempt = await tryMany([() => api.post("courses/", payload), () => api.post("courses", payload)]);
         if (!attempt.ok) throw attempt.error;
         await loadPublic();
         return attempt.res.data ?? attempt.res;
@@ -556,8 +667,8 @@ export function DataProvider({ children }) {
 
       try {
         const attempt = await tryMany([
-          () => api.patch(`/courses/${encodeURIComponent(id)}/`, payload),
-          () => api.patch(`/courses/${encodeURIComponent(id)}`, payload),
+          () => api.patch(`courses/${encodeURIComponent(id)}/`, payload),
+          () => api.patch(`courses/${encodeURIComponent(id)}`, payload),
         ]);
         if (!attempt.ok) throw attempt.error;
         await loadPublic();
@@ -569,82 +680,26 @@ export function DataProvider({ children }) {
     [loadPublic]
   );
 
-  /* =========================
-   * HELPERS for TeacherDashboard
-   * ========================= */
-  const lessons = teacherLessons;
-  const homeworks = teacherHomeworks;
-
-  const findUserById = useCallback(
-    (userId) => {
-      const uid = String(userId ?? "");
-      if (!uid) return null;
-
-      const list = Array.isArray(teacherHomeworks) ? teacherHomeworks : [];
-      const hit = list.find((x) => String(x?.user ?? x?.userId ?? "") === uid) || null;
-
-      const name =
-        hit?.student_username ||
-        hit?.studentUsername ||
-        hit?.username ||
-        hit?.student_name ||
-        hit?.studentName ||
-        "";
-
-      return { id: uid, name, username: name };
-    },
-    [teacherHomeworks]
-  );
-
-  const getCourseWithDetails = useCallback(
-    (courseId) => {
-      const cid = String(courseId ?? "");
-      const list = Array.isArray(courses) ? courses : [];
-      return list.find((c) => String(c?.id ?? c?.pk ?? c?.course_id ?? "") === cid) || null;
-    },
-    [courses]
-  );
-
-  const getLessonsByCourse = useCallback(
-    (courseId) => {
-      const cid = String(courseId ?? "");
-      const list = Array.isArray(teacherLessons) ? teacherLessons : [];
-      return list.filter((l) => getLessonCourseId(l) === cid);
-    },
-    [teacherLessons]
-  );
-
   const value = useMemo(
     () => ({
-      // public
       categories,
       courses,
       tariffs,
       loadPublic,
 
-      // teacher
       teacherLessons,
       teacherHomeworks,
       loadTeacherLessons,
       loadTeacherHomeworks,
       reviewHomework,
 
-      // teacher aliases
-      lessons,
-      homeworks,
-
-      // teacher extras
       archiveHomework,
       unarchiveHomework,
       addLesson,
       updateLesson,
       addCourse,
       updateCourse,
-      findUserById,
-      getCourseWithDetails,
-      getLessonsByCourse,
 
-      // student
       myCourses,
       myHomeworks,
       loadMyCourses,
@@ -652,13 +707,12 @@ export function DataProvider({ children }) {
       activateToken,
       submitHomework,
 
-      // lessons/video
       lessonsByCourse,
       loadLessonsPublicByCourse,
+
       openLesson,
       openedLessons,
 
-      // misc
       loading,
       error,
 
@@ -670,32 +724,33 @@ export function DataProvider({ children }) {
       courses,
       tariffs,
       loadPublic,
+
       teacherLessons,
       teacherHomeworks,
       loadTeacherLessons,
       loadTeacherHomeworks,
       reviewHomework,
-      lessons,
-      homeworks,
+
       archiveHomework,
       unarchiveHomework,
       addLesson,
       updateLesson,
       addCourse,
       updateCourse,
-      findUserById,
-      getCourseWithDetails,
-      getLessonsByCourse,
+
       myCourses,
       myHomeworks,
       loadMyCourses,
       loadMyHomeworks,
       activateToken,
       submitHomework,
+
       lessonsByCourse,
       loadLessonsPublicByCourse,
+
       openLesson,
       openedLessons,
+
       loading,
       error,
     ]

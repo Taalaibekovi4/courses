@@ -1,7 +1,15 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useParams, useLocation, Link } from "react-router-dom";
 import { toast } from "sonner";
-import { PlayCircle, Lock, CheckCircle, Send, Link as LinkIcon, Clock, XCircle } from "lucide-react";
+import {
+  PlayCircle,
+  CheckCircle,
+  Send,
+  Link as LinkIcon,
+  Clock,
+  XCircle,
+  Lock,
+} from "lucide-react";
 
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { useData } from "../contexts/DataContext.jsx";
@@ -33,15 +41,15 @@ function getYouTubeId(raw) {
 
 function statusBadge(status) {
   if (status === "accepted") return <Badge className="bg-green-600 text-white border-transparent">Принято</Badge>;
-  if (status === "rejected") return <Badge variant="destructive">На доработку</Badge>;
-  if (status === "submitted") return <Badge variant="secondary">На проверке</Badge>;
+  if (status === "rework") return <Badge variant="secondary">На доработку</Badge>;
+  if (status === "declined") return <Badge variant="destructive">Отклонено</Badge>;
   return null;
 }
 
 function LessonStatusIcon({ status }) {
   if (status === "accepted") return <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />;
-  if (status === "rejected") return <XCircle className="w-5 h-5 text-red-600 flex-shrink-0" />;
-  if (status === "submitted") return <Clock className="w-5 h-5 text-orange-600 flex-shrink-0" />;
+  if (status === "rework") return <Clock className="w-5 h-5 text-orange-600 flex-shrink-0" />;
+  if (status === "declined") return <XCircle className="w-5 h-5 text-red-600 flex-shrink-0" />;
   return <PlayCircle className="w-5 h-5 text-gray-400 flex-shrink-0" />;
 }
 
@@ -69,23 +77,23 @@ function DashNavInline({ title }) {
   );
 }
 
-function getId(x) {
-  return x?.id ?? x?.pk ?? x?.course_id ?? x?.courseId ?? "";
+function getCourseId(course) {
+  return String(course?.id ?? course?.course_id ?? "").trim();
 }
 function getLessonId(x) {
-  return String(x?.id ?? x?.pk ?? "");
+  return String(x?.id ?? x?.pk ?? "").trim();
 }
 function getHwLessonId(hw) {
   return String(hw?.lesson ?? hw?.lesson_id ?? hw?.lessonId ?? hw?.lesson?.id ?? hw?.lesson?.pk ?? "");
 }
 function getHwCourseId(hw) {
-  return String(hw?.course ?? hw?.course_id ?? hw?.courseId ?? hw?.lesson_course ?? hw?.lesson?.course ?? hw?.lesson?.course_id ?? "");
+  return String(hw?.course_id ?? hw?.courseId ?? hw?.course ?? "");
 }
 function getHwStatus(hw) {
   return String(hw?.status ?? "").toLowerCase();
 }
 function getHwTeacherComment(hw) {
-  return hw?.teacher_comment ?? hw?.teacherComment ?? hw?.comment ?? "";
+  return hw?.comment ?? "";
 }
 
 export function StudentCoursePage() {
@@ -108,22 +116,20 @@ export function StudentCoursePage() {
 
   useEffect(() => {
     if (!user || !courseId) return;
-
-    data.loadMyCourses();
-    data.loadMyHomeworks();
-    data.loadLessonsPublicByCourse(courseId);
-  }, [user, courseId]); // eslint-disable-line react-hooks/exhaustive-deps
+    data.loadMyCourses?.();
+    data.loadMyHomeworks?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, courseId]);
 
   const course = useMemo(() => {
     const list = Array.isArray(data.myCourses) ? data.myCourses : [];
-    return list.find((c) => String(getId(c)) === String(courseId)) || null;
+    return list.find((c) => String(getCourseId(c)) === String(courseId)) || null;
   }, [data.myCourses, courseId]);
 
   const lessons = useMemo(() => {
-    const map = data.lessonsByCourse || {};
-    const arr = map[String(courseId)] || [];
-    return Array.isArray(arr) ? arr : [];
-  }, [data.lessonsByCourse, courseId]);
+    const arr = Array.isArray(course?.lessons) ? course.lessons : [];
+    return arr.filter((l) => !!getLessonId(l));
+  }, [course?.lessons]);
 
   useEffect(() => {
     if (!lessons.length) return;
@@ -151,16 +157,16 @@ export function StudentCoursePage() {
     return (data.openedLessons || {})[lessonKey] || null;
   }, [data.openedLessons, lessonKey]);
 
-  // ВАЖНО: видео получаем только через /api/lessons/open/
   useEffect(() => {
     if (!lessonKey) return;
     setOpenErr("");
 
     (async () => {
-      const res = await data.openLesson(lessonKey, { force: true });
+      const res = await data.openLesson?.(lessonKey, { force: true });
       if (res?.ok === false) setOpenErr(res?.error || "Нет доступа к видео");
     })();
-  }, [lessonKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonKey]);
 
   const myHomeworks = useMemo(() => (Array.isArray(data.myHomeworks) ? data.myHomeworks : []), [data.myHomeworks]);
 
@@ -172,7 +178,10 @@ export function StudentCoursePage() {
     const list = myHomeworks
       .filter((hw) => getHwCourseId(hw) === cid && getHwLessonId(hw) === lid)
       .slice()
-      .sort((a, b) => new Date((b.updated_at || b.updatedAt || b.created_at || b.createdAt || 0)) - new Date((a.updated_at || a.updatedAt || a.created_at || a.createdAt || 0)));
+      .sort(
+        (a, b) =>
+          new Date((b.updated_at || b.created_at || 0)) - new Date((a.updated_at || a.created_at || 0))
+      );
 
     return list[0] || null;
   }, [myHomeworks, currentLesson, courseId]);
@@ -180,18 +189,19 @@ export function StudentCoursePage() {
   useEffect(() => {
     setHomeworkText(myHwForLesson?.content || "");
     setLinkInput("");
-  }, [myHwForLesson?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [myHwForLesson?.id]);
 
   const lessonHomeworkStatusMap = useMemo(() => {
     const map = new Map();
     const cid = String(courseId);
+
+    const rank = (s) => (s === "accepted" ? 3 : s === "rework" ? 2 : s === "declined" ? 1 : 0);
 
     myHomeworks
       .filter((hw) => getHwCourseId(hw) === cid)
       .forEach((hw) => {
         const lid = getHwLessonId(hw);
         const prev = map.get(lid);
-        const rank = (s) => (s === "accepted" ? 3 : s === "submitted" ? 2 : s === "rejected" ? 1 : 0);
         const st = getHwStatus(hw);
         if (!prev || rank(st) > rank(prev)) map.set(lid, st);
       });
@@ -204,11 +214,9 @@ export function StudentCoursePage() {
 
   const pickRawVideo = useCallback(() => {
     const o = openedLesson || {};
-    // DataContext сохраняет payload + __picked_video (если нашёл)
     const v = o.__picked_video || "";
     if (norm(v)) return v;
 
-    // fallback: если вдруг бэк отдаёт видео прямо в другом поле
     return (
       o.video_url ||
       o.videoUrl ||
@@ -231,8 +239,10 @@ export function StudentCoursePage() {
     if (isLoading) return <div className="w-full h-full flex items-center justify-center text-white/70">Загрузка видео...</div>;
 
     if (ytId) {
-      // youtube-nocookie + embed — самый мягкий вариант
-      const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(ytId)}?autoplay=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1`;
+      const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(
+        ytId
+      )}?autoplay=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1`;
+
       return (
         <iframe
           title="video"
@@ -249,7 +259,7 @@ export function StudentCoursePage() {
 
     return (
       <div className="w-full h-full flex items-center justify-center text-white/70 text-center px-4">
-        {openErr || "Видео недоступно. Проверь backend /api/lessons/open/"}
+        {openErr || "Видео недоступно"}
       </div>
     );
   }, [pickRawVideo, data.loading?.openLesson, lessonKey, openErr]);
@@ -273,9 +283,9 @@ export function StudentCoursePage() {
     }
 
     const lid = getLessonId(currentLesson);
-    const res = await data.submitHomework({ lessonId: lid, content: text });
+    const res = await data.submitHomework?.({ lessonId: lid, content: text });
 
-    if (res?.ok) toast.success("Отправлено на проверку");
+    if (res?.ok) toast.success("Отправлено");
     else toast.error(res?.error || "Не удалось отправить ДЗ");
   }
 
@@ -288,9 +298,14 @@ export function StudentCoursePage() {
           <DashNavInline title="Раздел: Мои курсы → Курс" />
           <Card>
             <CardContent className="py-12 text-center">
-              <p className="text-gray-600">Курс не найден (или нет доступа)</p>
-              <div className="mt-4">
-                <Link to="/dashboard?tab=courses"><Button variant="outline">Назад</Button></Link>
+              <p className="text-gray-600">У вас нет доступа к этому курсу.</p>
+              <div className="mt-4 flex gap-3 justify-center flex-wrap">
+                <Link to="/dashboard?tab=activate">
+                  <Button>Взять доступ</Button>
+                </Link>
+                <Link to="/dashboard?tab=courses">
+                  <Button variant="outline">Назад</Button>
+                </Link>
               </div>
             </CardContent>
           </Card>
@@ -299,9 +314,7 @@ export function StudentCoursePage() {
     );
   }
 
-  const courseTitle = course?.title || course?.name || "Курс";
-  const teacherName = course?.teacher_name || course?.teacher?.name || course?.teacher?.username || course?.teacher_username || "";
-  const categoryName = course?.category_name || course?.category?.name || "";
+  const courseTitle = course?.title || course?.name || course?.access?.course_title || "Курс";
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -310,10 +323,13 @@ export function StudentCoursePage() {
 
         <div className="mb-6">
           <h1 className="text-3xl mb-2">{courseTitle}</h1>
-          <p className="text-gray-600">
-            {teacherName ? `Преподаватель: ${teacherName}` : "Курс"}
-            {categoryName ? <span className="ml-2">• {categoryName}</span> : null}
-          </p>
+          {course?.access?.remaining_videos != null ? (
+            <p className="text-gray-600">
+              Осталось открытий видео: <span className="font-medium">{course.access.remaining_videos}</span>
+            </p>
+          ) : (
+            <p className="text-gray-600">Курс</p>
+          )}
         </div>
 
         <div className={cameFromHomework ? "grid lg:grid-cols-1 gap-6" : "grid lg:grid-cols-3 gap-6"}>
@@ -322,16 +338,15 @@ export function StudentCoursePage() {
               <Card>
                 <CardHeader><CardTitle>Уроки курса</CardTitle></CardHeader>
                 <CardContent>
-                  {data.loading?.lessonsByCourse?.[String(courseId)] ? (
-                    <div className="text-sm text-gray-600">Загрузка уроков...</div>
-                  ) : lessons.length === 0 ? (
+                  {lessons.length === 0 ? (
                     <div className="text-sm text-gray-600">Пока нет уроков в этом курсе.</div>
                   ) : (
                     <div className="space-y-2">
                       {lessons.map((lesson, idx) => {
-                        const id = getLessonId(lesson) || String(idx);
+                        const id = getLessonId(lesson) || `lesson_${idx}`;
                         const st = lessonHomeworkStatusMap.get(id);
                         const active = String(selectedLessonId) === String(id);
+                        const opened = !!lesson?.is_opened;
 
                         return (
                           <button
@@ -347,8 +362,11 @@ export function StudentCoursePage() {
                               <LessonStatusIcon status={st} />
                               <div className="flex-1 min-w-0">
                                 <p className="font-medium truncate">{lesson?.title || `Урок ${idx + 1}`}</p>
-                                <p className="text-xs text-gray-600 truncate">{lesson?.description || ""}</p>
+                                <p className="text-xs text-gray-600 truncate">
+                                  {opened ? "Открыт" : "Не открыт"}
+                                </p>
                               </div>
+                              {!opened ? <Lock className="w-4 h-4 text-gray-500" /> : null}
                             </div>
                           </button>
                         );
@@ -362,7 +380,11 @@ export function StudentCoursePage() {
 
           <div className={cameFromHomework ? "space-y-6" : "lg:col-span-2 space-y-6"}>
             {!currentLesson ? (
-              <Card><CardContent className="py-12 text-center"><p className="text-gray-600">Выберите урок</p></CardContent></Card>
+              <Card>
+                <CardContent className="py-12 text-center">
+                  <p className="text-gray-600">Выберите урок</p>
+                </CardContent>
+              </Card>
             ) : (
               <>
                 <Card>
@@ -372,44 +394,20 @@ export function StudentCoursePage() {
                   </CardHeader>
                   <CardContent>
                     <div className="aspect-video bg-black rounded-lg overflow-hidden">{renderVideo()}</div>
-                    {currentLesson?.description ? <p className="mt-4 text-gray-700">{currentLesson.description}</p> : null}
                   </CardContent>
                 </Card>
 
                 <Card>
                   <CardHeader><CardTitle>Домашнее задание</CardTitle></CardHeader>
                   <CardContent>
-                    {currentLesson?.homework_title || currentLesson?.homework_description || currentLesson?.homework_link ? (
-                      <div className="mb-4 space-y-2">
-                        {currentLesson?.homework_title ? <p className="font-medium">{currentLesson.homework_title}</p> : null}
-                        {currentLesson?.homework_description ? (
-                          <p className="text-sm text-gray-700 whitespace-pre-wrap">{currentLesson.homework_description}</p>
-                        ) : (
-                          <p className="text-sm text-gray-600">Можно отправить решение текстом и ссылкой.</p>
-                        )}
-
-                        {currentLesson?.homework_link ? (
-                          <a
-                            className="text-sm text-blue-600 hover:underline break-all inline-flex items-center gap-2"
-                            href={currentLesson.homework_link}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            <LinkIcon className="w-4 h-4" />
-                            {currentLesson.homework_link}
-                          </a>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <p className="mb-4 text-sm text-gray-600">Можно отправить решение текстом и ссылкой.</p>
-                    )}
-
                     {getHwTeacherComment(myHwForLesson) ? (
                       <div className="mb-4 p-3 bg-blue-50 rounded">
                         <div className="text-sm font-medium mb-1">Комментарий преподавателя:</div>
                         <div className="text-sm whitespace-pre-wrap">{getHwTeacherComment(myHwForLesson)}</div>
                       </div>
-                    ) : null}
+                    ) : (
+                      <p className="mb-4 text-sm text-gray-600">Можно отправить решение текстом и ссылкой.</p>
+                    )}
 
                     <Textarea
                       placeholder="Ваш ответ или пояснение..."
@@ -427,7 +425,12 @@ export function StudentCoursePage() {
                           onChange={(e) => setLinkInput(e.target.value)}
                           disabled={!canEdit || !!data.loading?.submitHomework}
                         />
-                        <Button type="button" variant="outline" onClick={addLinkIntoHomeworkText} disabled={!canEdit || !!data.loading?.submitHomework}>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={addLinkIntoHomeworkText}
+                          disabled={!canEdit || !!data.loading?.submitHomework}
+                        >
                           <LinkIcon className="w-4 h-4 mr-2" />
                           Добавить
                         </Button>
@@ -443,7 +446,7 @@ export function StudentCoursePage() {
                       ) : (
                         <Button onClick={handleSendHomework} disabled={!canEdit || !!data.loading?.submitHomework}>
                           <Send className="w-4 h-4 mr-2" />
-                          {data.loading?.submitHomework ? "Отправка..." : "Отправить на проверку"}
+                          {data.loading?.submitHomework ? "Отправка..." : "Отправить"}
                         </Button>
                       )}
                     </div>
