@@ -1,15 +1,9 @@
-import React, { useEffect } from "react";
-import {
-  BrowserRouter,
-  Routes,
-  Route,
-  Navigate,
-  useLocation,
-  Outlet,
-} from "react-router-dom";
+// src/app/App.jsx
+import React, { useEffect, useRef } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, Outlet } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "../contexts/AuthContext.jsx";
-import { DataProvider } from "../contexts/DataContext.jsx";
+import { DataProvider, useData } from "../contexts/DataContext.jsx";
 
 import { Header } from "../components/Header.jsx";
 import { Footer } from "../components/Footer.jsx";
@@ -71,6 +65,23 @@ function ContainerLayout() {
 }
 
 function AppRoutes() {
+  const data = useData();
+  const didInitRef = useRef(false);
+
+  useEffect(() => {
+    // ✅ защита от бесконечного цикла
+    if (didInitRef.current) return;
+    didInitRef.current = true;
+
+    if (data?.loadPublic) {
+      Promise.resolve(data.loadPublic()).catch((e) => {
+        console.error(e);
+      });
+    }
+    // намеренно без зависимостей, чтобы не ловить цикл от "data"
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="min-h-screen flex flex-col bg-gray-50 overflow-x-hidden">
       <Header />
@@ -78,16 +89,16 @@ function AppRoutes() {
 
       <main className="flex-1">
         <Routes>
-          {/* ✅ full-width страницы */}
+          {/* full-width страницы */}
           <Route path="/" element={<HomePage />} />
           <Route path="/courses" element={<CoursesListPage />} />
           <Route path="/categories" element={<CategoriesPage />} />
-          <Route path="/category/:slug" element={<CategoryPage />} />
-          <Route path="/course/:slug" element={<CoursePage />} />
+          <Route path="/category/:id" element={<CategoryPage />} />
+          <Route path="/course/:id" element={<CoursePage />} />
 
-          {/* ✅ контейнерные страницы */}
+          {/* контейнерные страницы */}
           <Route element={<ContainerLayout />}>
-          <Route path="/register" element={<RegisterPage />} />
+            <Route path="/register" element={<RegisterPage />} />
             <Route path="/login" element={<LoginPage />} />
 
             <Route

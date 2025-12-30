@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useParams, useLocation, Link } from "react-router-dom";
-import YouTube from "react-youtube";
 import { toast } from "sonner";
-import { PlayCircle, Lock, CheckCircle, Send, Paperclip, Link as LinkIcon, X, Clock, XCircle } from "lucide-react";
+import { PlayCircle, Lock, CheckCircle, Send, Link as LinkIcon, Clock, XCircle } from "lucide-react";
 
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { useData } from "../contexts/DataContext.jsx";
@@ -18,15 +17,18 @@ const norm = (s) => String(s ?? "").trim();
 function getYouTubeId(raw) {
   const v = norm(raw);
   if (!v) return "";
-  if (/^[a-zA-Z0-9_-]{6,}$/.test(v) && !v.includes("http")) return v;
+  if (/^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
 
-  const m1 = v.match(/(?:youtube\.com\/watch\?v=)([^&]+)/);
-  if (m1?.[1]) return m1[1];
-  const m2 = v.match(/(?:youtu\.be\/)([^?&]+)/);
-  if (m2?.[1]) return m2[1];
+  const short = v.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+  if (short?.[1]) return short[1];
 
-  const m3 = v.match(/([a-zA-Z0-9_-]{6,})/);
-  return m3?.[1] || "";
+  const m = v.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+  if (m?.[1]) return m[1];
+
+  const emb = v.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/);
+  if (emb?.[1]) return emb[1];
+
+  return "";
 }
 
 function statusBadge(status) {
@@ -40,52 +42,7 @@ function LessonStatusIcon({ status }) {
   if (status === "accepted") return <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />;
   if (status === "rejected") return <XCircle className="w-5 h-5 text-red-600 flex-shrink-0" />;
   if (status === "submitted") return <Clock className="w-5 h-5 text-orange-600 flex-shrink-0" />;
-  return null;
-}
-
-function AttachmentsList({ attachments, onRemove, readonly = false }) {
-  const list = Array.isArray(attachments) ? attachments : [];
-  if (!list.length) return null;
-
-  return (
-    <div className="mt-3 space-y-2">
-      <p className="text-xs text-gray-600">Прикрепления:</p>
-      <div className="space-y-2">
-        {list.map((a, idx) => {
-          const url = a?.url || "";
-          const name = a?.name || "Файл";
-          const isLink = a?.type === "link";
-          return (
-            <div key={`${a?.type || "x"}_${idx}`} className="flex items-center justify-between gap-3 border rounded p-2 bg-white">
-              <a
-                href={url || "#"}
-                target={url ? "_blank" : undefined}
-                rel="noreferrer"
-                className={`text-sm break-all ${url ? "text-blue-600 hover:underline" : "text-gray-700"}`}
-                onClick={(e) => {
-                  if (!url) e.preventDefault();
-                }}
-              >
-                {isLink ? "🔗 " : "📎 "}
-                {name}
-              </a>
-
-              {!readonly && (
-                <button
-                  className="text-gray-500 hover:text-red-600"
-                  onClick={() => onRemove(idx)}
-                  type="button"
-                  aria-label="remove"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+  return <PlayCircle className="w-5 h-5 text-gray-400 flex-shrink-0" />;
 }
 
 function DashNavInline({ title }) {
@@ -101,44 +58,46 @@ function DashNavInline({ title }) {
       <div className="flex flex-wrap gap-2">
         {items.map((it) => (
           <Link key={it.to} to={it.to} className="block">
-            <span
-              className={[
-                "inline-flex items-center justify-center rounded-md border px-3 py-2 text-sm",
-                "transition select-none bg-white border-gray-200 text-gray-800",
-                "hover:bg-gray-100",
-              ].join(" ")}
-            >
+            <span className="inline-flex items-center justify-center rounded-md border px-3 py-2 text-sm transition select-none bg-white border-gray-200 text-gray-800 hover:bg-gray-100">
               {it.label}
             </span>
           </Link>
         ))}
       </div>
-
-      {/* ✅ заголовок снизу */}
       <div className="mt-3 text-sm text-gray-600">{title}</div>
     </div>
   );
+}
+
+function getId(x) {
+  return x?.id ?? x?.pk ?? x?.course_id ?? x?.courseId ?? "";
+}
+function getLessonId(x) {
+  return String(x?.id ?? x?.pk ?? "");
+}
+function getHwLessonId(hw) {
+  return String(hw?.lesson ?? hw?.lesson_id ?? hw?.lessonId ?? hw?.lesson?.id ?? hw?.lesson?.pk ?? "");
+}
+function getHwCourseId(hw) {
+  return String(hw?.course ?? hw?.course_id ?? hw?.courseId ?? hw?.lesson_course ?? hw?.lesson?.course ?? hw?.lesson?.course_id ?? "");
+}
+function getHwStatus(hw) {
+  return String(hw?.status ?? "").toLowerCase();
+}
+function getHwTeacherComment(hw) {
+  return hw?.teacher_comment ?? hw?.teacherComment ?? hw?.comment ?? "";
 }
 
 export function StudentCoursePage() {
   const { courseId } = useParams();
   const location = useLocation();
   const { user } = useAuth();
+  const data = useData();
 
-  const {
-    getLessonsByCourse,
-    getUserTokens,
-    getUserHomeworks,
-    markLessonAsOpened,
-    submitHomework,
-    updateHomework,
-    getCourseWithDetails,
-  } = useData();
-
-  const [selectedLesson, setSelectedLesson] = useState(null);
+  const [selectedLessonId, setSelectedLessonId] = useState("");
   const [homeworkText, setHomeworkText] = useState("");
   const [linkInput, setLinkInput] = useState("");
-  const [attachments, setAttachments] = useState([]);
+  const [openErr, setOpenErr] = useState("");
 
   const queryLessonId = useMemo(() => {
     const sp = new URLSearchParams(location.search);
@@ -147,275 +106,308 @@ export function StudentCoursePage() {
 
   const cameFromHomework = !!queryLessonId;
 
-  if (!user || !courseId) return null;
+  useEffect(() => {
+    if (!user || !courseId) return;
 
-  const lessons = getLessonsByCourse(courseId);
-  const courseDetails = getCourseWithDetails(courseId);
-  const userToken = getUserTokens(user.id).find((t) => t.courseId === courseId);
-  const userHomeworks = getUserHomeworks(user.id);
+    data.loadMyCourses();
+    data.loadMyHomeworks();
+    data.loadLessonsPublicByCourse(courseId);
+  }, [user, courseId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const course = useMemo(() => {
+    const list = Array.isArray(data.myCourses) ? data.myCourses : [];
+    return list.find((c) => String(getId(c)) === String(courseId)) || null;
+  }, [data.myCourses, courseId]);
+
+  const lessons = useMemo(() => {
+    const map = data.lessonsByCourse || {};
+    const arr = map[String(courseId)] || [];
+    return Array.isArray(arr) ? arr : [];
+  }, [data.lessonsByCourse, courseId]);
 
   useEffect(() => {
     if (!lessons.length) return;
 
     if (queryLessonId) {
-      const exists = lessons.find((l) => String(l.id) === String(queryLessonId));
+      const exists = lessons.find((l) => getLessonId(l) === String(queryLessonId));
       if (exists) {
-        setSelectedLesson(exists.id);
+        setSelectedLessonId(getLessonId(exists));
         return;
       }
     }
 
-    if (!selectedLesson) setSelectedLesson(lessons[0]?.id || null);
-  }, [lessons, queryLessonId, selectedLesson]);
+    if (!selectedLessonId) setSelectedLessonId(getLessonId(lessons[0]));
+  }, [lessons, queryLessonId, selectedLessonId]);
 
-  if (!userToken || !courseDetails) {
+  const currentLesson = useMemo(() => {
+    if (!selectedLessonId) return null;
+    return lessons.find((l) => getLessonId(l) === String(selectedLessonId)) || null;
+  }, [lessons, selectedLessonId]);
+
+  const lessonKey = getLessonId(currentLesson);
+
+  const openedLesson = useMemo(() => {
+    if (!lessonKey) return null;
+    return (data.openedLessons || {})[lessonKey] || null;
+  }, [data.openedLessons, lessonKey]);
+
+  // ВАЖНО: видео получаем только через /api/lessons/open/
+  useEffect(() => {
+    if (!lessonKey) return;
+    setOpenErr("");
+
+    (async () => {
+      const res = await data.openLesson(lessonKey, { force: true });
+      if (res?.ok === false) setOpenErr(res?.error || "Нет доступа к видео");
+    })();
+  }, [lessonKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const myHomeworks = useMemo(() => (Array.isArray(data.myHomeworks) ? data.myHomeworks : []), [data.myHomeworks]);
+
+  const myHwForLesson = useMemo(() => {
+    if (!currentLesson) return null;
+    const lid = getLessonId(currentLesson);
+    const cid = String(courseId);
+
+    const list = myHomeworks
+      .filter((hw) => getHwCourseId(hw) === cid && getHwLessonId(hw) === lid)
+      .slice()
+      .sort((a, b) => new Date((b.updated_at || b.updatedAt || b.created_at || b.createdAt || 0)) - new Date((a.updated_at || a.updatedAt || a.created_at || a.createdAt || 0)));
+
+    return list[0] || null;
+  }, [myHomeworks, currentLesson, courseId]);
+
+  useEffect(() => {
+    setHomeworkText(myHwForLesson?.content || "");
+    setLinkInput("");
+  }, [myHwForLesson?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const lessonHomeworkStatusMap = useMemo(() => {
+    const map = new Map();
+    const cid = String(courseId);
+
+    myHomeworks
+      .filter((hw) => getHwCourseId(hw) === cid)
+      .forEach((hw) => {
+        const lid = getHwLessonId(hw);
+        const prev = map.get(lid);
+        const rank = (s) => (s === "accepted" ? 3 : s === "submitted" ? 2 : s === "rejected" ? 1 : 0);
+        const st = getHwStatus(hw);
+        if (!prev || rank(st) > rank(prev)) map.set(lid, st);
+      });
+
+    return map;
+  }, [myHomeworks, courseId]);
+
+  const isAccepted = getHwStatus(myHwForLesson) === "accepted";
+  const canEdit = !!currentLesson && !isAccepted;
+
+  const pickRawVideo = useCallback(() => {
+    const o = openedLesson || {};
+    // DataContext сохраняет payload + __picked_video (если нашёл)
+    const v = o.__picked_video || "";
+    if (norm(v)) return v;
+
+    // fallback: если вдруг бэк отдаёт видео прямо в другом поле
     return (
-      <div className="container mx-auto px-4 py-12">
-        <Card>
-          <CardContent className="py-12 text-center">
-            <p className="text-gray-600">У вас нет доступа к этому курсу</p>
-          </CardContent>
-        </Card>
+      o.video_url ||
+      o.videoUrl ||
+      o.video ||
+      o.file_url ||
+      o.fileUrl ||
+      o.youtube_video_id ||
+      o.youtubeVideoId ||
+      o.youtube_id ||
+      o.youtubeId ||
+      ""
+    );
+  }, [openedLesson]);
+
+  const renderVideo = useCallback(() => {
+    const raw = pickRawVideo();
+    const ytId = getYouTubeId(raw);
+    const isLoading = !!data.loading?.openLesson?.[lessonKey];
+
+    if (isLoading) return <div className="w-full h-full flex items-center justify-center text-white/70">Загрузка видео...</div>;
+
+    if (ytId) {
+      // youtube-nocookie + embed — самый мягкий вариант
+      const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(ytId)}?autoplay=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1`;
+      return (
+        <iframe
+          title="video"
+          src={src}
+          className="w-full h-full"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+        />
+      );
+    }
+
+    const url = norm(raw);
+    if (url) return <video src={url} controls className="w-full h-full object-cover bg-black" preload="metadata" />;
+
+    return (
+      <div className="w-full h-full flex items-center justify-center text-white/70 text-center px-4">
+        {openErr || "Видео недоступно. Проверь backend /api/lessons/open/"}
+      </div>
+    );
+  }, [pickRawVideo, data.loading?.openLesson, lessonKey, openErr]);
+
+  function addLinkIntoHomeworkText() {
+    const url = norm(linkInput);
+    if (!url) return;
+    const normalized = url.startsWith("http") ? url : `https://${url}`;
+    const next = homeworkText ? `${homeworkText}\n\nСсылка: ${normalized}` : `Ссылка: ${normalized}`;
+    setHomeworkText(next);
+    setLinkInput("");
+  }
+
+  async function handleSendHomework() {
+    if (!currentLesson) return;
+
+    const text = norm(homeworkText);
+    if (!text) {
+      toast.error("Добавьте текст (и/или ссылку)");
+      return;
+    }
+
+    const lid = getLessonId(currentLesson);
+    const res = await data.submitHomework({ lessonId: lid, content: text });
+
+    if (res?.ok) toast.success("Отправлено на проверку");
+    else toast.error(res?.error || "Не удалось отправить ДЗ");
+  }
+
+  if (!user || !courseId) return null;
+
+  if (!course) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="container mx-auto px-4 py-12">
+          <DashNavInline title="Раздел: Мои курсы → Курс" />
+          <Card>
+            <CardContent className="py-12 text-center">
+              <p className="text-gray-600">Курс не найден (или нет доступа)</p>
+              <div className="mt-4">
+                <Link to="/dashboard?tab=courses"><Button variant="outline">Назад</Button></Link>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
 
-  const currentLesson = selectedLesson ? lessons.find((l) => l.id === selectedLesson) : null;
-
-  const myHwForLesson = useMemo(() => {
-    if (!currentLesson) return null;
-    const list = (userHomeworks || [])
-      .filter((hw) => hw.courseId === courseId && hw.lessonId === currentLesson.id)
-      .slice()
-      .sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
-    return list[0] || null;
-  }, [userHomeworks, courseId, currentLesson]);
-
-  useEffect(() => {
-    if (!currentLesson) return;
-
-    if (myHwForLesson) {
-      setHomeworkText(myHwForLesson.content || "");
-      setAttachments(Array.isArray(myHwForLesson.attachments) ? myHwForLesson.attachments : []);
-      setLinkInput("");
-    } else {
-      setHomeworkText("");
-      setAttachments([]);
-      setLinkInput("");
-    }
-  }, [currentLesson?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const canOpenLesson = useCallback(
-    (lessonId) => {
-      if (userToken.openedLessons.includes(lessonId)) return true;
-      if (userToken.videoLimit === -1) return true;
-      return userToken.videosUsed < userToken.videoLimit;
-    },
-    [userToken]
-  );
-
-  const handleLessonSelect = (lessonId) => {
-    if (canOpenLesson(lessonId)) {
-      setSelectedLesson(lessonId);
-      if (!userToken.openedLessons.includes(lessonId)) {
-        markLessonAsOpened(userToken.id, lessonId);
-      }
-    } else {
-      toast.error("У вас закончились доступные видео. Купите новый тариф.");
-    }
-  };
-
-  function addLink() {
-    const url = norm(linkInput);
-    if (!url) return;
-    const normalized = url.startsWith("http") ? url : `https://${url}`;
-    setAttachments((prev) => [...prev, { type: "link", name: normalized, url: normalized }]);
-    setLinkInput("");
-  }
-
-  function onPickFiles(e) {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
-
-    const items = files.slice(0, 30).map((f) => ({
-      type: "file",
-      name: f.webkitRelativePath || f.name,
-      url: URL.createObjectURL(f),
-    }));
-
-    setAttachments((prev) => [...prev, ...items]);
-    e.target.value = "";
-  }
-
-  function removeAttachment(idx) {
-    setAttachments((prev) => {
-      const item = prev[idx];
-      if (item?.url?.startsWith("blob:")) {
-        try {
-          URL.revokeObjectURL(item.url);
-        } catch (_) {}
-      }
-      return prev.filter((_, i) => i !== idx);
-    });
-  }
-
-  const isAccepted = myHwForLesson?.status === "accepted";
-  const isRejected = myHwForLesson?.status === "rejected";
-  const isSubmitted = myHwForLesson?.status === "submitted";
-
-  const canEdit = !!currentLesson && !isAccepted;
-  const canSendNew = !!currentLesson && !myHwForLesson;
-  const canResubmit = !!currentLesson && isRejected;
-
-  const handleSaveOrSend = () => {
-    if (!currentLesson) return;
-
-    const text = norm(homeworkText);
-    if (!text && attachments.length === 0) {
-      toast.error("Добавьте текст, ссылку или файл");
-      return;
-    }
-
-    if (canSendNew) {
-      submitHomework({
-        lessonId: currentLesson.id,
-        userId: user.id,
-        courseId,
-        content: text,
-        attachments,
-      });
-      toast.success("Домашнее задание отправлено на проверку");
-      return;
-    }
-
-    if (isSubmitted && myHwForLesson) {
-      updateHomework(myHwForLesson.id, { content: text, attachments });
-      toast.success("Сохранено (ожидает проверки)");
-      return;
-    }
-
-    if (canResubmit && myHwForLesson) {
-      updateHomework(myHwForLesson.id, {
-        content: text,
-        attachments,
-        status: "submitted",
-        submittedAt: new Date(),
-        reviewedAt: null,
-        teacherComment: "",
-      });
-      toast.success("Отправлено повторно на проверку");
-      return;
-    }
-
-    toast.error("Это задание уже принято — менять нельзя.");
-  };
-
-  const playerOpts = { width: "100%", height: "100%", playerVars: { autoplay: 0 } };
-
-  const lessonHomeworkStatusMap = useMemo(() => {
-    const map = new Map();
-    (userHomeworks || [])
-      .filter((hw) => hw.courseId === courseId)
-      .forEach((hw) => {
-        const prev = map.get(hw.lessonId);
-        const rank = (s) => (s === "accepted" ? 3 : s === "submitted" ? 2 : s === "rejected" ? 1 : 0);
-        if (!prev || rank(hw.status) > rank(prev)) map.set(hw.lessonId, hw.status);
-      });
-    return map;
-  }, [userHomeworks, courseId]);
+  const courseTitle = course?.title || course?.name || "Курс";
+  const teacherName = course?.teacher_name || course?.teacher?.name || course?.teacher?.username || course?.teacher_username || "";
+  const categoryName = course?.category_name || course?.category?.name || "";
 
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto px-4 py-8">
-        {/* ✅ такая же навигация + заголовок снизу */}
-        <DashNavInline />
+        <DashNavInline title="Раздел: Мои курсы → Курс" />
 
         <div className="mb-6">
-          <h1 className="text-3xl mb-2">{courseDetails.title}</h1>
+          <h1 className="text-3xl mb-2">{courseTitle}</h1>
           <p className="text-gray-600">
-            Доступно видео: {userToken.videosUsed} / {userToken.videoLimit === -1 ? lessons.length : userToken.videoLimit}
+            {teacherName ? `Преподаватель: ${teacherName}` : "Курс"}
+            {categoryName ? <span className="ml-2">• {categoryName}</span> : null}
           </p>
         </div>
 
         <div className={cameFromHomework ? "grid lg:grid-cols-1 gap-6" : "grid lg:grid-cols-3 gap-6"}>
-          {/* Lessons List */}
           {!cameFromHomework ? (
             <div className="lg:col-span-1">
               <Card>
-                <CardHeader>
-                  <CardTitle>Уроки курса</CardTitle>
-                </CardHeader>
+                <CardHeader><CardTitle>Уроки курса</CardTitle></CardHeader>
                 <CardContent>
-                  <div className="space-y-2">
-                    {lessons.map((lesson) => {
-                      const canOpen = canOpenLesson(lesson.id);
-                      const st = lessonHomeworkStatusMap.get(lesson.id);
+                  {data.loading?.lessonsByCourse?.[String(courseId)] ? (
+                    <div className="text-sm text-gray-600">Загрузка уроков...</div>
+                  ) : lessons.length === 0 ? (
+                    <div className="text-sm text-gray-600">Пока нет уроков в этом курсе.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {lessons.map((lesson, idx) => {
+                        const id = getLessonId(lesson) || String(idx);
+                        const st = lessonHomeworkStatusMap.get(id);
+                        const active = String(selectedLessonId) === String(id);
 
-                      return (
-                        <button
-                          key={lesson.id}
-                          onClick={() => handleLessonSelect(lesson.id)}
-                          className={`w-full text-left p-3 rounded-lg transition ${
-                            selectedLesson === lesson.id ? "bg-blue-100 border-blue-600" : "hover:bg-gray-100"
-                          } border ${!canOpen ? "opacity-50" : ""}`}
-                          disabled={!canOpen}
-                          type="button"
-                        >
-                          <div className="flex items-center gap-3">
-                            {st ? (
+                        return (
+                          <button
+                            key={id}
+                            onClick={() => setSelectedLessonId(id)}
+                            className={[
+                              "w-full text-left p-3 rounded-lg transition border",
+                              active ? "bg-blue-100 border-blue-600" : "hover:bg-gray-100 border-gray-200",
+                            ].join(" ")}
+                            type="button"
+                          >
+                            <div className="flex items-center gap-3">
                               <LessonStatusIcon status={st} />
-                            ) : canOpen ? (
-                              <PlayCircle className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                            ) : (
-                              <Lock className="w-5 h-5 text-gray-400 flex-shrink-0" />
-                            )}
-
-                            <div className="flex-1 min-w-0">
-                              <p className="font-medium truncate">{lesson.title}</p>
-                              <p className="text-xs text-gray-600 truncate">{lesson.description}</p>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium truncate">{lesson?.title || `Урок ${idx + 1}`}</p>
+                                <p className="text-xs text-gray-600 truncate">{lesson?.description || ""}</p>
+                              </div>
                             </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
           ) : null}
 
-          {/* Video Player & Homework */}
           <div className={cameFromHomework ? "space-y-6" : "lg:col-span-2 space-y-6"}>
-            {currentLesson ? (
+            {!currentLesson ? (
+              <Card><CardContent className="py-12 text-center"><p className="text-gray-600">Выберите урок</p></CardContent></Card>
+            ) : (
               <>
                 <Card>
                   <CardHeader className="flex-row items-start justify-between">
-                    <CardTitle className="min-w-0">{currentLesson.title}</CardTitle>
-                    {myHwForLesson?.status ? statusBadge(myHwForLesson.status) : null}
+                    <CardTitle className="min-w-0">{currentLesson?.title || "Урок"}</CardTitle>
+                    {myHwForLesson?.status ? statusBadge(getHwStatus(myHwForLesson)) : null}
                   </CardHeader>
                   <CardContent>
-                    <div className="aspect-video bg-black rounded-lg overflow-hidden">
-                      <YouTube videoId={getYouTubeId(currentLesson.videoUrl)} opts={playerOpts} className="w-full h-full" />
-                    </div>
-                    <p className="mt-4 text-gray-700">{currentLesson.description}</p>
+                    <div className="aspect-video bg-black rounded-lg overflow-hidden">{renderVideo()}</div>
+                    {currentLesson?.description ? <p className="mt-4 text-gray-700">{currentLesson.description}</p> : null}
                   </CardContent>
                 </Card>
 
                 <Card>
-                  <CardHeader>
-                    <CardTitle>Домашнее задание</CardTitle>
-                  </CardHeader>
+                  <CardHeader><CardTitle>Домашнее задание</CardTitle></CardHeader>
                   <CardContent>
-                    {currentLesson.homeworkDescription ? (
-                      <p className="mb-4">{currentLesson.homeworkDescription}</p>
+                    {currentLesson?.homework_title || currentLesson?.homework_description || currentLesson?.homework_link ? (
+                      <div className="mb-4 space-y-2">
+                        {currentLesson?.homework_title ? <p className="font-medium">{currentLesson.homework_title}</p> : null}
+                        {currentLesson?.homework_description ? (
+                          <p className="text-sm text-gray-700 whitespace-pre-wrap">{currentLesson.homework_description}</p>
+                        ) : (
+                          <p className="text-sm text-gray-600">Можно отправить решение текстом и ссылкой.</p>
+                        )}
+
+                        {currentLesson?.homework_link ? (
+                          <a
+                            className="text-sm text-blue-600 hover:underline break-all inline-flex items-center gap-2"
+                            href={currentLesson.homework_link}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <LinkIcon className="w-4 h-4" />
+                            {currentLesson.homework_link}
+                          </a>
+                        ) : null}
+                      </div>
                     ) : (
-                      <p className="mb-4 text-sm text-gray-600">Можно отправить решение текстом, ссылкой или файлом.</p>
+                      <p className="mb-4 text-sm text-gray-600">Можно отправить решение текстом и ссылкой.</p>
                     )}
 
-                    {myHwForLesson?.teacherComment ? (
+                    {getHwTeacherComment(myHwForLesson) ? (
                       <div className="mb-4 p-3 bg-blue-50 rounded">
                         <div className="text-sm font-medium mb-1">Комментарий преподавателя:</div>
-                        <div className="text-sm whitespace-pre-wrap">{myHwForLesson.teacherComment}</div>
+                        <div className="text-sm whitespace-pre-wrap">{getHwTeacherComment(myHwForLesson)}</div>
                       </div>
                     ) : null}
 
@@ -424,43 +416,23 @@ export function StudentCoursePage() {
                       value={homeworkText}
                       onChange={(e) => setHomeworkText(e.target.value)}
                       rows={5}
-                      disabled={!canEdit}
+                      disabled={!canEdit || !!data.loading?.submitHomework}
                     />
 
-                    <div className="mt-4 grid md:grid-cols-2 gap-3">
-                      <div className="flex gap-2">
+                    <div className="mt-4 flex flex-col md:flex-row gap-3">
+                      <div className="flex gap-2 w-full">
                         <Input
                           placeholder="Ссылка (GitHub, Google Drive...)"
                           value={linkInput}
                           onChange={(e) => setLinkInput(e.target.value)}
-                          disabled={!canEdit}
+                          disabled={!canEdit || !!data.loading?.submitHomework}
                         />
-                        <Button type="button" variant="outline" onClick={addLink} disabled={!canEdit}>
+                        <Button type="button" variant="outline" onClick={addLinkIntoHomeworkText} disabled={!canEdit || !!data.loading?.submitHomework}>
                           <LinkIcon className="w-4 h-4 mr-2" />
                           Добавить
                         </Button>
                       </div>
-
-                      <div className="flex gap-2">
-                        <label className={`w-full ${canEdit ? "" : "opacity-60 pointer-events-none"}`}>
-                          <input
-                            type="file"
-                            multiple
-                            webkitdirectory="true"
-                            directory="true"
-                            onChange={onPickFiles}
-                            className="hidden"
-                            disabled={!canEdit}
-                          />
-                          <div className="w-full border rounded-md px-3 py-2 bg-white cursor-pointer hover:bg-gray-50 flex items-center justify-center gap-2">
-                            <Paperclip className="w-4 h-4" />
-                            <span className="text-sm">Файлы / Папка</span>
-                          </div>
-                        </label>
-                      </div>
                     </div>
-
-                    <AttachmentsList attachments={attachments} onRemove={removeAttachment} readonly={!canEdit} />
 
                     <div className="mt-4 flex flex-wrap gap-3">
                       {isAccepted ? (
@@ -469,21 +441,15 @@ export function StudentCoursePage() {
                           Принято — отправка закрыта
                         </Button>
                       ) : (
-                        <Button onClick={handleSaveOrSend}>
+                        <Button onClick={handleSendHomework} disabled={!canEdit || !!data.loading?.submitHomework}>
                           <Send className="w-4 h-4 mr-2" />
-                          {canSendNew ? "Отправить на проверку" : isSubmitted ? "Сохранить" : isRejected ? "Отправить снова" : "Сохранить"}
+                          {data.loading?.submitHomework ? "Отправка..." : "Отправить на проверку"}
                         </Button>
                       )}
                     </div>
                   </CardContent>
                 </Card>
               </>
-            ) : (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <p className="text-gray-600">Выберите урок</p>
-                </CardContent>
-              </Card>
             )}
           </div>
         </div>
@@ -491,3 +457,5 @@ export function StudentCoursePage() {
     </div>
   );
 }
+
+export default StudentCoursePage;

@@ -28,62 +28,63 @@ function normalizeKgPhone(value) {
 
 export function RegisterPage() {
   const navigate = useNavigate();
-  const auth = useAuth?.() || {};
-  const registerFn = auth.register; // может быть undefined
+  const { register } = useAuth();
 
+  // ФИО в Swagger нет — оставил как поле, но не блокирую и не отправляю
   const [fullName, setFullName] = useState("");
+
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState(KG_PREFIX);
   const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
 
-  const [isLoading, setIsLoading] = useState(false);
+  const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
   const phoneValue = useMemo(() => normalizeKgPhone(phone), [phone]);
 
+  const pwdLenOk = String(password || "").length >= 8;
+  const pwdMatch = String(password || "") === String(password2 || "");
+
   const canSubmit = useMemo(() => {
-    if (!norm(fullName)) return false;
     if (!norm(email)) return false;
     if (!phoneKG.test(phoneValue)) return false;
-    if (String(password || "").length < 6) return false;
+    if (!pwdLenOk) return false;
+    if (!pwdMatch) return false;
     return true;
-  }, [fullName, email, phoneValue, password]);
+  }, [email, phoneValue, pwdLenOk, pwdMatch]);
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
 
-    if (typeof registerFn !== "function") {
-      setError("Регистрация ещё не подключена в AuthContext (нет метода register).");
-      return;
-    }
-
-    const name = norm(fullName);
     const mail = norm(email).toLowerCase();
 
-    if (!name) return setError("Введите ФИО");
     if (!mail) return setError("Введите Email");
     if (!phoneKG.test(phoneValue)) return setError("Телефон должен быть в формате +996XXXXXXXXX");
-    if (String(password || "").length < 6) return setError("Пароль минимум 6 символов");
+    if (!pwdLenOk) return setError("Пароль минимум 8 символов");
+    if (!pwdMatch) return setError("Пароли не совпадают");
 
+    setPending(true);
     try {
-      setIsLoading(true);
-
-      // ожидаем, что register вернёт true/false (как login)
-      const ok = await registerFn({
-        fullName: name,
+      const res = await register({
         email: mail,
         phone: phoneValue,
         password,
+        password2,
       });
 
-      if (ok) navigate("/");
-      else setError("Не удалось зарегистрироваться. Проверьте данные.");
+      if (res?.ok) {
+        // по умолчанию это student — отправляем в кабинет
+        navigate("/dashboard", { replace: true });
+        return;
+      }
+
+      setError(res?.error || "Не удалось зарегистрироваться. Проверьте данные.");
     } catch (err) {
-      console.error("Register error:", err);
       setError("Ошибка регистрации. Попробуйте ещё раз.");
     } finally {
-      setIsLoading(false);
+      setPending(false);
     }
   }
 
@@ -109,7 +110,7 @@ export function RegisterPage() {
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 placeholder="Например: Асан Асанов"
-                required
+                disabled={pending}
               />
             </div>
 
@@ -120,7 +121,9 @@ export function RegisterPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="name@example.com"
                 type="email"
+                autoComplete="email"
                 required
+                disabled={pending}
               />
             </div>
 
@@ -132,6 +135,7 @@ export function RegisterPage() {
                 inputMode="tel"
                 placeholder="+996700123456"
                 required
+                disabled={pending}
               />
               <div className="text-xs text-gray-500">
                 Формат: <span className="font-medium">+996XXXXXXXXX</span>
@@ -144,13 +148,34 @@ export function RegisterPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Минимум 6 символов"
+                placeholder="Минимум 8 символов"
+                autoComplete="new-password"
                 required
+                disabled={pending}
               />
+              {!pwdLenOk && norm(password) && (
+                <div className="text-xs text-red-600">Минимум 8 символов</div>
+              )}
             </div>
 
-            <Button type="submit" className="w-full" disabled={!canSubmit || isLoading}>
-              {isLoading ? "Создаём аккаунт..." : "Зарегистрироваться"}
+            <div className="space-y-2">
+              <label className="text-sm">Повторите пароль</label>
+              <Input
+                type="password"
+                value={password2}
+                onChange={(e) => setPassword2(e.target.value)}
+                placeholder="Повторите пароль"
+                autoComplete="new-password"
+                required
+                disabled={pending}
+              />
+              {!pwdMatch && norm(password2) && (
+                <div className="text-xs text-red-600">Пароли не совпадают</div>
+              )}
+            </div>
+
+            <Button type="submit" className="w-full" disabled={!canSubmit || pending}>
+              {pending ? "Создаём аккаунт..." : "Зарегистрироваться"}
             </Button>
           </form>
 
@@ -159,14 +184,6 @@ export function RegisterPage() {
             <Link to="/login" className="text-blue-700 hover:underline font-medium">
               Войти
             </Link>
-          </div>
-
-          <div className="mt-6 p-4 bg-gray-100 rounded-lg">
-            <p className="text-sm mb-2">Подсказка:</p>
-            <div className="space-y-1 text-xs text-gray-700">
-              <p>• Телефон сам приводится к +996XXXXXXXXX</p>
-              <p>• Пароль минимум 6 символов</p>
-            </div>
           </div>
         </CardContent>
       </Card>

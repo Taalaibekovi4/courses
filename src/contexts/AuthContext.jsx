@@ -1,12 +1,10 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { mockUsers } from "../data/mockData.js";
+import { api, clearTokens, setTokens } from "../lib/api.js";
 
 const AuthContext = createContext(null);
 
 const LS_USER_KEY = "user";
-const LS_USERS_KEY = "users"; // тут будут храниться зарегистрированные
-const norm = (s) => String(s ?? "").trim();
-const lower = (s) => norm(s).toLowerCase();
+const LS_ACCESS = "access"; // совпадает с твоим api.js
 
 function safeJsonParse(raw, fallback) {
   try {
@@ -18,102 +16,129 @@ function safeJsonParse(raw, fallback) {
   }
 }
 
-function getStoredUsers() {
-  const stored = safeJsonParse(localStorage.getItem(LS_USERS_KEY), []);
-  return Array.isArray(stored) ? stored : [];
+function mapMeToUser(data) {
+  if (!data) return null;
+  return {
+    id: data.id,
+    name: data.username || data.name || "",
+    email: data.email || "",
+    role: data.role || "student",
+  };
 }
 
-function setStoredUsers(users) {
-  try {
-    localStorage.setItem(LS_USERS_KEY, JSON.stringify(users));
-  } catch (e) {
-    console.error("localStorage set users error:", e);
+function extractErrorMessage(e) {
+  const d = e?.response?.data;
+
+  if (!d) return "Ошибка";
+  if (typeof d === "string") return d;
+
+  // DRF часто отдаёт ошибки по полям: { email: ["..."], password: ["..."] }
+  if (typeof d === "object") {
+    if (d.detail) return String(d.detail);
+    if (d.error) return String(d.error);
+
+    const parts = [];
+    Object.entries(d).forEach(([k, v]) => {
+      if (Array.isArray(v)) parts.push(`${k}: ${v.join(", ")}`);
+      else if (typeof v === "string") parts.push(`${k}: ${v}`);
+    });
+    if (parts.length) return parts.join(" | ");
   }
+
+  return "Ошибка";
 }
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // единый список: мок + зарегистрированные
-  const allUsers = useMemo(() => {
-    const stored = getStoredUsers();
-    const base = Array.isArray(mockUsers) ? mockUsers : [];
-    return [...base, ...stored];
-  }, []);
+  const persistUser = (u) => {
+    setUser(u);
+    try {
+      if (u) localStorage.setItem(LS_USER_KEY, JSON.stringify(u));
+      else localStorage.removeItem(LS_USER_KEY);
+    } catch (e) {
+      console.error("localStorage user error:", e);
+    }
+  };
+
+  const fetchMe = async () => {
+    const res = await api.get("/auth/me/");
+    return mapMeToUser(res?.data);
+  };
 
   useEffect(() => {
-    const saved = safeJsonParse(localStorage.getItem(LS_USER_KEY), null);
-    if (saved) setUser(saved);
-    setIsLoading(false);
+    (async () => {
+      // 1) быстрый UI
+      const saved = safeJsonParse(localStorage.getItem(LS_USER_KEY), null);
+      if (saved) setUser(saved);
+
+      // ✅ 2) НЕ долбим /auth/me/ если вообще нет access
+      const hasAccess = !!localStorage.getItem(LS_ACCESS);
+      if (!hasAccess) {
+        persistUser(null);
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const me = await fetchMe();
+        persistUser(me);
+      } catch (e) {
+        persistUser(null);
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function login(email, password) {
-    const mail = lower(email);
-    if (!mail) return false;
+    try {
+      const res = await api.post("/auth/login/", { email, password });
+      const access = res?.data?.access;
+      const refresh = res?.data?.refresh;
+      if (!access || !refresh) return { ok: false, error: "Неверный ответ от сервера" };
 
-    const stored = getStoredUsers();
-    const base = Array.isArray(mockUsers) ? mockUsers : [];
-    const users = [...base, ...stored];
+      setTokens({ access, refresh });
 
-    // пароль сейчас не проверяем (как у тебя было “мок”)
-    const found = users.find((u) => lower(u.email) === mail);
-    if (!found) return false;
+      const me = await fetchMe();
+      persistUser(me);
 
-    setUser(found);
-    localStorage.setItem(LS_USER_KEY, JSON.stringify(found));
-    return true;
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: extractErrorMessage(e) || "Ошибка входа" };
+    }
   }
 
-  async function register({ fullName, email, phone, password }) {
-    const name = norm(fullName);
-    const mail = lower(email);
-    const ph = norm(phone);
-    const pwd = String(password ?? "");
+  async function register({ email, phone, password, password2 }) {
+    try {
+      // ✅ если password2 не передали — делаем = password (частая причина 400)
+      const payload = {
+        email,
+        phone: phone || "",
+        password,
+        password2: password2 || password,
+      };
 
-    if (!name) return { ok: false, error: "Введите ФИО" };
-    if (!mail) return { ok: false, error: "Введите Email" };
-    if (!ph) return { ok: false, error: "Введите телефон" };
-    if (pwd.length < 6) return { ok: false, error: "Пароль минимум 6 символов" };
+      await api.post("/auth/register/", payload);
 
-    const stored = getStoredUsers();
-    const base = Array.isArray(mockUsers) ? mockUsers : [];
-    const users = [...base, ...stored];
-
-    const exists = users.some((u) => lower(u.email) === mail);
-    if (exists) return { ok: false, error: "Такой Email уже зарегистрирован" };
-
-    // создаём нового пользователя (по умолчанию student)
-    const newUser = {
-      id: `u_${Date.now()}`,
-      role: "student",
-      name,
-      email: mail,
-      phone: ph,
-      // пароль можно не хранить (демо), но если хочешь — можешь оставить:
-      password: pwd,
-    };
-
-    const nextStored = [newUser, ...stored];
-    setStoredUsers(nextStored);
-
-    // авто-вход после регистрации
-    setUser(newUser);
-    localStorage.setItem(LS_USER_KEY, JSON.stringify(newUser));
-
-    return { ok: true };
+      // после регистрации — логин
+      const r = await login(email, password);
+      return r.ok ? { ok: true } : { ok: false, error: r.error || "Регистрация прошла, но вход не выполнен" };
+    } catch (e) {
+      return { ok: false, error: extractErrorMessage(e) || "Ошибка регистрации" };
+    }
   }
 
   function logout() {
-    setUser(null);
-    localStorage.removeItem(LS_USER_KEY);
+    clearTokens();
+    persistUser(null);
   }
 
-  return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, register }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  const value = useMemo(() => ({ user, isLoading, login, logout, register }), [user, isLoading]);
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

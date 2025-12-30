@@ -1,58 +1,197 @@
+// src/pages/CoursePage.jsx
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { Link, useParams } from "react-router-dom";
-import { useData } from "../contexts/DataContext.jsx";
+import { Link, useParams, useLocation } from "react-router-dom";
+import axios from "axios";
+import { api as authApi } from "../lib/api.js";
+
 import { Button } from "../components/ui/button.jsx";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card.jsx";
 import { Badge } from "../components/ui/badge.jsx";
-import {
-  PlayCircle,
-  CheckCircle,
-  X,
-  BookOpen,
-  GraduationCap,
-  ShoppingCart,
-} from "lucide-react";
+import { PlayCircle, CheckCircle, X, BookOpen, GraduationCap, ShoppingCart } from "lucide-react";
 
 const WHATSAPP_NUMBER = "996221000953";
 const PREVIEW_SECONDS = 5;
 
-const FALLBACK_YT_URL = "https://www.youtube.com/watch?v=ysz5S6PUM-U";
-
 const FALLBACK_COVER =
   "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1600&q=80";
-const FALLBACK_TEACHER =
-  "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1600&q=80";
 
 const fullBleed = "w-screen left-1/2 right-1/2 -ml-[50vw] -mr-[50vw]";
+const norm = (s) => String(s ?? "").trim();
+
+function pickCourseIdFromParams(params) {
+  return String(params?.id ?? params?.slug ?? params?.courseId ?? params?.pk ?? "").trim();
+}
+
+function extractArray(data) {
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.results)) return data.results;
+  return [];
+}
+
+function getCourseId(obj) {
+  return obj?.id ?? obj?.pk ?? obj?.courseId ?? obj?.course_id ?? null;
+}
+function getCourseTitle(obj) {
+  return obj?.title || obj?.name || "Курс";
+}
+function getCourseDesc(obj) {
+  return obj?.description || obj?.desc || "";
+}
+function getTeacherNameFromAny(obj) {
+  return (
+    obj?.teacherName ||
+    obj?.teacher_name ||
+    obj?.teacher?.full_name ||
+    obj?.teacher?.username ||
+    obj?.teacher?.email ||
+    "—"
+  );
+}
+function getCategoryNameFromAny(obj) {
+  return obj?.categoryName || obj?.category_name || obj?.category?.name || obj?.category_title || "";
+}
+function getCourseTeacherId(obj) {
+  return obj?.teacherId ?? obj?.teacher_id ?? obj?.teacher ?? obj?.teacher?.id ?? null;
+}
+function getCourseCategoryId(obj) {
+  return obj?.categoryId ?? obj?.category_id ?? obj?.category ?? obj?.category?.id ?? null;
+}
+
+function pickLessonVideo(obj) {
+  // важные поля: video_url и youtube_video_id (в teacher/lessons они readOnly)
+  const v =
+    obj?.video_url ||
+    obj?.videoUrl ||
+    obj?.video ||
+    obj?.youtube_video_id ||
+    obj?.youtubeVideoId ||
+    obj?.youtube_id ||
+    obj?.url ||
+    "";
+  return String(v || "").trim();
+}
+
+function extractLessonsFromCourse(courseLike) {
+  const raw =
+    courseLike?.lessons ||
+    courseLike?.lesson_list ||
+    courseLike?.lessons_list ||
+    courseLike?._raw?.lessons ||
+    courseLike?._raw?.lesson_list ||
+    courseLike?._raw?.lessons_list ||
+    null;
+
+  const arr = extractArray(raw);
+  if (!arr.length) return [];
+  return arr.map((l, idx) => ({
+    id: l?.id ?? l?.pk ?? `embedded-${idx + 1}`,
+    title: l?.title || l?.name || `Урок ${idx + 1}`,
+    description: l?.description || "",
+    order: l?.order ?? idx + 1,
+    videoUrl: pickLessonVideo(l),
+    youtubeStatus: String(l?.youtube_status || ""),
+    youtubeError: String(l?.youtube_error || ""),
+    homeworkDescription: l?.homework_description || "",
+    _raw: l,
+  }));
+}
 
 function getYouTubeId(input) {
   const s = String(input || "").trim();
   if (!s) return "";
+
+  // чистый 11-симв id
   if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
 
+  // youtu.be/ID
   const short = s.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
   if (short?.[1]) return short[1];
 
+  // watch?v=ID
   const v = s.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
   if (v?.[1]) return v[1];
 
+  // /embed/ID
   const emb = s.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/);
   if (emb?.[1]) return emb[1];
 
   return "";
 }
 
-function ensureYouTubeScript() {
+function getAccessTokenAny() {
+  try {
+    const ls = window.localStorage;
+    return (
+      ls.getItem("access") ||
+      ls.getItem("token") ||
+      ls.getItem("jwt_access") ||
+      ls.getItem("authToken") ||
+      ""
+    );
+  } catch (_) {
+    return "";
+  }
+}
+
+/** безопасный GET с перебором путей */
+async function tryGet(apiInstance, paths, config = {}) {
+  let last = null;
+  for (const p of paths) {
+    try {
+      const r = await apiInstance.get(p, config);
+      return { ok: true, data: r.data, path: p };
+    } catch (e) {
+      last = e;
+      const code = e?.response?.status;
+      if (code === 401) break;
+    }
+  }
+  return { ok: false, error: last?.message || "Ошибка запроса" };
+}
+
+/** безопасный POST с перебором путей */
+async function tryPost(apiInstance, paths, payload, config = {}) {
+  let last = null;
+  for (const p of paths) {
+    try {
+      const r = await apiInstance.post(p, payload, config);
+      return { ok: true, data: r.data, path: p };
+    } catch (e) {
+      last = e;
+      const code = e?.response?.status;
+      if (code === 401) break;
+    }
+  }
+  return { ok: false, error: last?.message || "Ошибка запроса" };
+}
+
+/** YT API loader */
+function ensureYouTubeScriptWithTimeout(ms = 3500) {
   return new Promise((resolve) => {
     if (window.YT && window.YT.Player) return resolve(true);
 
     const existing = document.getElementById("yt-iframe-api");
+    let done = false;
+
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      resolve(ok);
+    };
+
+    const t = setTimeout(() => finish(false), ms);
+
+    const check = () => {
+      if (window.YT && window.YT.Player) {
+        clearTimeout(t);
+        finish(true);
+      }
+    };
+
     if (existing) {
-      const check = setInterval(() => {
-        if (window.YT && window.YT.Player) {
-          clearInterval(check);
-          resolve(true);
-        }
+      const i = setInterval(() => {
+        check();
+        if (done) clearInterval(i);
       }, 100);
       return;
     }
@@ -60,9 +199,16 @@ function ensureYouTubeScript() {
     const tag = document.createElement("script");
     tag.id = "yt-iframe-api";
     tag.src = "https://www.youtube.com/iframe_api";
+    tag.onerror = () => finish(false);
     document.body.appendChild(tag);
 
-    window.onYouTubeIframeAPIReady = () => resolve(true);
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      try {
+        if (typeof prev === "function") prev();
+      } catch (_) {}
+      check();
+    };
   });
 }
 
@@ -74,14 +220,30 @@ const fmtTime = (sec) => {
 };
 
 export function CoursePage() {
-  const { slug } = useParams();
+  const params = useParams();
+  const courseId = pickCourseIdFromParams(params);
 
-  const data = useData?.() || {};
-  const courses = Array.isArray(data.courses) ? data.courses : [];
-  const getCourseWithDetails =
-    typeof data.getCourseWithDetails === "function" ? data.getCourseWithDetails : () => null;
-  const getLessonsByCourse =
-    typeof data.getLessonsByCourse === "function" ? data.getLessonsByCourse : () => [];
+  const location = useLocation();
+  const preview = location?.state?.coursePreview || null;
+
+  // ✅ public api всегда через /api (под Vite proxy) — НЕ напрямую на домен
+  const publicApi = useMemo(() => axios.create({ baseURL: "/api", timeout: 20000 }), []);
+  const privateApi = useMemo(() => authApi, []);
+
+  const [course, setCourse] = useState(() => {
+    const pid = getCourseId(preview);
+    if (pid != null && String(pid) === String(courseId)) return preview;
+    return null;
+  });
+
+  const [courseLoading, setCourseLoading] = useState(false);
+
+  const [lessons, setLessons] = useState([]);
+  const [lessonsLoading, setLessonsLoading] = useState(false);
+  const [lessonsState, setLessonsState] = useState({
+    mode: "idle",
+    message: "",
+  });
 
   const [selectedLessonIds, setSelectedLessonIds] = useState([]);
   const [activeLessonId, setActiveLessonId] = useState(null);
@@ -93,13 +255,14 @@ export function CoursePage() {
   const [videoError, setVideoError] = useState("");
   const [isVideoEnded, setIsVideoEnded] = useState(false);
 
-  // ✅ кастом-контролы
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [curTime, setCurTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isFs, setIsFs] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
+
+  const [fallbackIframeId, setFallbackIframeId] = useState(""); // ✅ fallback если YT API не загрузился
 
   const tariffsRef = useRef(null);
   const playRequestedRef = useRef(false);
@@ -111,33 +274,149 @@ export function CoursePage() {
   const uiTimerRef = useRef(null);
   const progTimerRef = useRef(null);
 
-  const course = useMemo(
-    () => courses.find((c) => String(c?.slug) === String(slug)) || null,
-    [courses, slug]
-  );
+  // ---------------------------
+  // LOAD COURSE (public)
+  // ---------------------------
+  const loadCourse = useCallback(async () => {
+    const cid = String(courseId || "").trim();
+    if (!cid) return;
 
-  const courseDetails = useMemo(() => {
-    if (!course?.id) return null;
-    return getCourseWithDetails(course.id);
-  }, [course, getCourseWithDetails]);
+    setCourseLoading(true);
+    try {
+      const res = await tryGet(publicApi, [`/courses/${cid}/`, `/vitrina/courses/${cid}/`]);
+      if (!res.ok || !res.data) {
+        setCourse(null);
+        return;
+      }
 
-  const lessons = useMemo(() => {
-    if (!course?.id) return [];
-    return getLessonsByCourse(course.id) || [];
-  }, [course, getLessonsByCourse]);
+      const fetched = res.data;
 
-  const teacher = courseDetails?.teacher || {};
-  const category = courseDetails?.category || {};
+      setCourse({
+        id: getCourseId(fetched) ?? cid,
+        title: getCourseTitle(fetched),
+        description: getCourseDesc(fetched),
+        lessonsCount: fetched?.lessonsCount ?? fetched?.lessons_count ?? 0,
+        teacherId: getCourseTeacherId(fetched),
+        categoryId: getCourseCategoryId(fetched),
+        teacherName: getTeacherNameFromAny(fetched),
+        categoryName: getCategoryNameFromAny(fetched),
+        _raw: fetched,
+      });
+    } finally {
+      setCourseLoading(false);
+    }
+  }, [courseId, publicApi]);
 
-  const coverUrl =
-    courseDetails?.coverUrl ||
-    courseDetails?.imageUrl ||
-    teacher?.avatarUrl ||
-    teacher?.photoUrl ||
-    FALLBACK_COVER;
+  useEffect(() => {
+    loadCourse();
+  }, [loadCourse]);
 
-  const teacherImg = teacher?.avatarUrl || teacher?.photoUrl || teacher?.image || FALLBACK_TEACHER;
+  const categoryName = useMemo(() => getCategoryNameFromAny(course) || "Категория", [course]);
+  const teacherName = useMemo(() => getTeacherNameFromAny(course) || "—", [course]);
 
+  // ---------------------------
+  // LOAD LESSONS
+  // ---------------------------
+  const loadLessons = useCallback(async () => {
+    const cid = getCourseId(course);
+    if (!cid) return;
+
+    setLessonsLoading(true);
+    setLessonsState({ mode: "idle", message: "" });
+
+    try {
+      // 1) embedded lessons inside course detail
+      const embedded = extractLessonsFromCourse(course);
+      if (embedded.length) {
+        embedded.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+        setLessons(embedded);
+        setLessonsState({ mode: "ok", message: "" });
+        return;
+      }
+
+      // 2) public lessons endpoints (пробуем несколько вариантов)
+      const pub = await tryGet(publicApi, [
+        "/lessons/public/",
+        "/vitrina/lessons/public/",
+        "/lessons/",
+        "/vitrina/lessons/",
+      ], { params: { course: cid } });
+
+      const pubArr = extractArray(pub?.data);
+      if (pubArr.length) {
+        const normalized = pubArr.map((l, idx) => ({
+          id: l?.id ?? l?.pk ?? `lesson-${idx + 1}`,
+          title: l?.title || l?.name || `Урок ${idx + 1}`,
+          description: l?.description || "",
+          order: l?.order ?? idx + 1,
+          videoUrl: pickLessonVideo(l),
+          youtubeStatus: String(l?.youtube_status || ""),
+          youtubeError: String(l?.youtube_error || ""),
+          homeworkDescription: l?.homework_description || "",
+          _raw: l,
+        }));
+        normalized.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+        setLessons(normalized);
+        setLessonsState({ mode: "ok", message: "" });
+        return;
+      }
+
+      // 3) если есть access — пробуем приватный список (у некоторых проектов он /my-courses/lessons/)
+      const access = getAccessTokenAny();
+      if (access) {
+        const priv = await tryGet(privateApi, [
+          "/lessons/",
+          "/my/lessons/",
+          "/my-courses/lessons/",
+          "/student/lessons/",
+        ], { params: { course: cid } });
+
+        const privArr = extractArray(priv?.data);
+        if (privArr.length) {
+          const normalized = privArr.map((l, idx) => ({
+            id: l?.id ?? l?.pk ?? `lesson-${idx + 1}`,
+            title: l?.title || l?.name || `Урок ${idx + 1}`,
+            description: l?.description || "",
+            order: l?.order ?? idx + 1,
+            videoUrl: pickLessonVideo(l),
+            youtubeStatus: String(l?.youtube_status || ""),
+            youtubeError: String(l?.youtube_error || ""),
+            homeworkDescription: l?.homework_description || "",
+            _raw: l,
+          }));
+          normalized.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+          setLessons(normalized);
+          setLessonsState({ mode: "ok", message: "" });
+          return;
+        }
+      }
+
+      // 4) если уроков по счетчику > 0 — значит бек не отдаёт список
+      const count = Number(course?.lessonsCount ?? course?._raw?.lessons_count ?? 0);
+      if (count > 0) {
+        setLessons([]);
+        setLessonsState({
+          mode: "backend_not_ready",
+          message:
+            "Уроки есть, но сервер не отдаёт их для витрины. Нужно: либо вернуть lessons в /courses/{id}/, либо сделать public endpoint списка уроков.",
+        });
+        return;
+      }
+
+      setLessons([]);
+      setLessonsState({ mode: "course_empty", message: "" });
+    } finally {
+      setLessonsLoading(false);
+    }
+  }, [course, publicApi, privateApi]);
+
+  useEffect(() => {
+    loadLessons();
+  }, [loadLessons]);
+
+  // ---------------------------
+  // LESSON UI
+  // ---------------------------
   const lessonsById = useMemo(() => {
     const map = new Map();
     (lessons || []).forEach((l) => map.set(l.id, l));
@@ -149,9 +428,6 @@ export function CoursePage() {
     if (!activeLessonId) return first;
     return lessonsById.get(activeLessonId) || first;
   }, [activeLessonId, lessons, lessonsById]);
-
-  const rawVideo = String(activeLesson?.videoUrl || "").trim() || FALLBACK_YT_URL;
-  const youTubeId = getYouTubeId(rawVideo);
 
   const selectedLessons = useMemo(() => {
     return (selectedLessonIds || []).map((id) => lessonsById.get(id)).filter(Boolean);
@@ -166,20 +442,21 @@ export function CoursePage() {
     });
   }, []);
 
+  // ---------------------------
+  // YT timers
+  // ---------------------------
   const stopYouTubeTimer = useCallback(() => {
     if (ytTimerRef.current) {
       clearInterval(ytTimerRef.current);
       ytTimerRef.current = null;
     }
   }, []);
-
   const stopProgTimer = useCallback(() => {
     if (progTimerRef.current) {
       clearInterval(progTimerRef.current);
       progTimerRef.current = null;
     }
   }, []);
-
   const stopUiTimer = useCallback(() => {
     if (uiTimerRef.current) {
       clearTimeout(uiTimerRef.current);
@@ -191,7 +468,6 @@ export function CoursePage() {
     stopYouTubeTimer();
     stopProgTimer();
     stopUiTimer();
-
     const p = ytPlayerRef.current;
     ytPlayerRef.current = null;
     if (p && typeof p.destroy === "function") {
@@ -207,6 +483,7 @@ export function CoursePage() {
     setIsVideoReady(false);
     setVideoError("");
     setIsVideoEnded(false);
+    setFallbackIframeId("");
 
     setIsPlaying(false);
     setIsMuted(false);
@@ -222,9 +499,11 @@ export function CoursePage() {
     setActiveLessonId(lessonId);
     setIsPaywallOpen(false);
     setIsPreviewOpen(true);
+
     setIsVideoReady(false);
     setVideoError("");
     setIsVideoEnded(false);
+    setFallbackIframeId("");
 
     setIsPlaying(false);
     setIsMuted(false);
@@ -236,9 +515,7 @@ export function CoursePage() {
   }, []);
 
   useEffect(() => {
-    return () => {
-      destroyYouTubePlayer();
-    };
+    return () => destroyYouTubePlayer();
   }, [destroyYouTubePlayer]);
 
   useEffect(() => {
@@ -259,6 +536,31 @@ export function CoursePage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [isPreviewOpen, closePreview]);
 
+  // ---------------------------
+  // OPEN LESSON (получить видео по токену)
+  // ---------------------------
+  const openLessonViaApi = useCallback(
+    async (lessonId) => {
+      const idNum = Number(lessonId);
+      if (!Number.isFinite(idNum)) return { ok: false, lesson: null };
+
+      // пробуем разные пути — потому что у всех по-разному названо
+      const res = await tryPost(
+        privateApi,
+        ["/lessons/open/", "/open-lesson/", "/lessons/open-lesson/", "/student/open-lesson/"],
+        { lesson_id: idNum }
+      );
+
+      if (!res.ok) return { ok: false, lesson: null };
+      const lessonObj = res?.data?.lesson || res?.data || null;
+      return { ok: true, lesson: lessonObj };
+    },
+    [privateApi]
+  );
+
+  // ---------------------------
+  // PREVIEW CONTROL
+  // ---------------------------
   const clampPreviewYouTube = useCallback(() => {
     const p = ytPlayerRef.current;
     if (!p || typeof p.getCurrentTime !== "function") return;
@@ -283,7 +585,6 @@ export function CoursePage() {
   const pullPlayerState = useCallback(() => {
     const p = ytPlayerRef.current;
     if (!p) return;
-
     try {
       if (typeof p.getCurrentTime === "function") setCurTime(Number(p.getCurrentTime() || 0));
       if (typeof p.getDuration === "function") setDuration(Number(p.getDuration() || 0));
@@ -299,14 +600,12 @@ export function CoursePage() {
   const showControls = useCallback(() => {
     setControlsVisible(true);
     stopUiTimer();
-    uiTimerRef.current = setTimeout(() => {
-      setControlsVisible(false);
-    }, 2000);
+    uiTimerRef.current = setTimeout(() => setControlsVisible(false), 2000);
   }, [stopUiTimer]);
 
   const togglePlay = useCallback(() => {
     const p = ytPlayerRef.current;
-    if (!p || isPaywallOpen || isVideoEnded || videoError) return;
+    if (!p || isPaywallOpen || isVideoEnded || videoError || fallbackIframeId) return;
 
     try {
       const state = typeof p.getPlayerState === "function" ? p.getPlayerState() : null;
@@ -322,11 +621,11 @@ export function CoursePage() {
     } catch (_) {}
 
     showControls();
-  }, [isPaywallOpen, isVideoEnded, videoError, showControls]);
+  }, [isPaywallOpen, isVideoEnded, videoError, showControls, fallbackIframeId]);
 
   const toggleMute = useCallback(() => {
     const p = ytPlayerRef.current;
-    if (!p || isPaywallOpen || isVideoEnded || videoError) return;
+    if (!p || isPaywallOpen || isVideoEnded || videoError || fallbackIframeId) return;
 
     try {
       if (typeof p.isMuted === "function" && p.isMuted()) {
@@ -339,12 +638,12 @@ export function CoursePage() {
     } catch (_) {}
 
     showControls();
-  }, [isPaywallOpen, isVideoEnded, videoError, showControls]);
+  }, [isPaywallOpen, isVideoEnded, videoError, showControls, fallbackIframeId]);
 
   const seekTo = useCallback(
     (t) => {
       const p = ytPlayerRef.current;
-      if (!p || isPaywallOpen || isVideoEnded || videoError) return;
+      if (!p || isPaywallOpen || isVideoEnded || videoError || fallbackIframeId) return;
 
       const next = Math.max(0, Math.min(Number(t) || 0, duration || 0));
       try {
@@ -354,7 +653,7 @@ export function CoursePage() {
 
       showControls();
     },
-    [duration, isPaywallOpen, isVideoEnded, videoError, showControls]
+    [duration, isPaywallOpen, isVideoEnded, videoError, showControls, fallbackIframeId]
   );
 
   const toggleFullscreen = useCallback(() => {
@@ -365,40 +664,63 @@ export function CoursePage() {
     const fsEl = doc.fullscreenElement;
 
     if (!fsEl) {
-      const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+      const req =
+        el.requestFullscreen ||
+        el.webkitRequestFullscreen ||
+        el.mozRequestFullScreen ||
+        el.msRequestFullscreen;
       if (req) req.call(el);
     } else {
-      const exit = doc.exitFullscreen || doc.webkitExitFullscreen || doc.mozCancelFullScreen || doc.msExitFullscreen;
+      const exit =
+        doc.exitFullscreen ||
+        doc.webkitExitFullscreen ||
+        doc.mozCancelFullScreen ||
+        doc.msExitFullscreen;
       if (exit) exit.call(doc);
     }
     showControls();
   }, [showControls]);
 
   useEffect(() => {
-    const onFs = () => {
-      setIsFs(Boolean(document.fullscreenElement));
-    };
+    const onFs = () => setIsFs(Boolean(document.fullscreenElement));
     document.addEventListener("fullscreenchange", onFs);
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
 
+  // ---------------------------
+  // INIT PLAYER (YT API + fallback iframe)
+  // ---------------------------
   const initYouTubePlayer = useCallback(
     async (videoId) => {
-      try {
-        await ensureYouTubeScript();
-        if (!ytMountRef.current) return;
+      // пробуем YT API, если не загрузился — fallback iframe
+      const ok = await ensureYouTubeScriptWithTimeout(3500);
 
-        destroyYouTubePlayer();
-
-        setIsVideoReady(false);
+      if (!ok) {
+        // ✅ fallback: iframe (видео будет видно почти всегда)
+        setFallbackIframeId(videoId);
+        setIsVideoReady(true);
         setVideoError("");
-        setIsVideoEnded(false);
-        setIsPlaying(false);
+        setIsPlaying(true);
         setCurTime(0);
         setDuration(0);
-        setIsMuted(false);
-        setControlsVisible(true);
+        return;
+      }
 
+      if (!ytMountRef.current) return;
+
+      destroyYouTubePlayer();
+
+      setFallbackIframeId("");
+      setIsVideoReady(false);
+      setVideoError("");
+      setIsVideoEnded(false);
+      setIsPlaying(false);
+      setCurTime(0);
+      setDuration(0);
+      setIsMuted(false);
+      setControlsVisible(true);
+
+      try {
         ytPlayerRef.current = new window.YT.Player(ytMountRef.current, {
           videoId,
           width: "100%",
@@ -406,14 +728,13 @@ export function CoursePage() {
           host: "https://www.youtube-nocookie.com",
           playerVars: {
             autoplay: 1,
-            controls: 0, // ✅ свои контролы
+            controls: 0,
             disablekb: 1,
-            fs: 0, // ✅ не ютуб-фуллскрин, а наш
+            fs: 0,
             modestbranding: 1,
             rel: 0,
             playsinline: 1,
             iv_load_policy: 3,
-            showinfo: 0,
             origin: window.location.origin,
           },
           events: {
@@ -453,7 +774,6 @@ export function CoursePage() {
                 return;
               }
 
-              // ✅ конец видео — перекрываем рекомендации
               if (e?.data === window.YT.PlayerState.ENDED) {
                 stopYouTubeTimer();
                 stopProgTimer();
@@ -465,9 +785,8 @@ export function CoursePage() {
                 } catch (_) {}
               }
             },
-            onError: (e) => {
-              console.error("YouTube error:", e);
-              setVideoError("YouTube не дал воспроизвести это видео. Поставь другое видео в урок.");
+            onError: () => {
+              setVideoError("Видео не воспроизводится. Проверь video_url/youtube_video_id на бэке.");
               setIsVideoReady(false);
               setIsVideoEnded(false);
               setIsPlaying(false);
@@ -476,8 +795,7 @@ export function CoursePage() {
             },
           },
         });
-      } catch (err) {
-        console.error("YT init error:", err);
+      } catch (_) {
         setVideoError("Не удалось загрузить плеер.");
         setIsVideoReady(false);
         setIsVideoEnded(false);
@@ -486,34 +804,79 @@ export function CoursePage() {
         stopProgTimer();
       }
     },
-    [destroyYouTubePlayer, startYouTubeTimer, stopYouTubeTimer, startProgTimer, stopProgTimer, showControls]
+    [
+      destroyYouTubePlayer,
+      startYouTubeTimer,
+      stopYouTubeTimer,
+      startProgTimer,
+      stopProgTimer,
+      showControls,
+    ]
   );
 
+  // при открытии превью: берем видео из урока, если пусто — пробуем openLesson
   useEffect(() => {
-    if (!isPreviewOpen) return;
+    let alive = true;
 
-    setIsPaywallOpen(false);
-    setIsVideoReady(false);
-    setVideoError("");
-    setIsVideoEnded(false);
-    setIsPlaying(false);
-    setCurTime(0);
-    setDuration(0);
-    setIsMuted(false);
-    setControlsVisible(true);
+    (async () => {
+      if (!isPreviewOpen) return;
 
-    if (!youTubeId) {
-      setVideoError("Неверная YouTube ссылка/ID (нужно v=... или youtu.be/...).");
+      setIsPaywallOpen(false);
       setIsVideoReady(false);
-      return;
-    }
+      setVideoError("");
+      setIsVideoEnded(false);
+      setIsPlaying(false);
+      setCurTime(0);
+      setDuration(0);
+      setIsMuted(false);
+      setControlsVisible(true);
+      setFallbackIframeId("");
 
-    const t = setTimeout(() => {
-      if (playRequestedRef.current) initYouTubePlayer(youTubeId);
-    }, 50);
+      const l = activeLesson;
+      if (!l) {
+        setVideoError("Урок не найден.");
+        return;
+      }
 
-    return () => clearTimeout(t);
-  }, [isPreviewOpen, youTubeId, initYouTubePlayer]);
+      let raw = String(l?.videoUrl || pickLessonVideo(l?._raw) || "").trim();
+      let ytId = getYouTubeId(raw);
+
+      // если бек не отдал видео в списке — пробуем открыть урок токеном
+      if (!raw || !ytId) {
+        const access = getAccessTokenAny();
+        if (!access) {
+          setIsPaywallOpen(true);
+          setVideoError("Чтобы открыть видео, нужен вход/токен.");
+          return;
+        }
+
+        const opened = await openLessonViaApi(l.id);
+        if (!alive) return;
+
+        const openedVideo = pickLessonVideo(opened?.lesson);
+        raw = String(openedVideo || "").trim();
+        ytId = getYouTubeId(raw);
+      }
+
+      if (!raw) {
+        setVideoError("В этом уроке нет видео (поля video_url / youtube_video_id пустые на сервере).");
+        return;
+      }
+
+      if (!ytId) {
+        setVideoError("Неверная ссылка/ID. Нужен YouTube URL или videoId (11 символов).");
+        return;
+      }
+
+      if (playRequestedRef.current) {
+        setTimeout(() => initYouTubePlayer(ytId), 50);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [isPreviewOpen, activeLesson, openLessonViaApi, initYouTubePlayer]);
 
   const scrollToTariffs = useCallback(() => {
     const el = tariffsRef.current;
@@ -521,14 +884,19 @@ export function CoursePage() {
     el.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  function generateWhatsAppTariffLink(tariffId) {
-    const tariff = courseDetails?.tariffs?.find((t) => t.id === tariffId);
-    if (!tariff) return "#";
+  function getTariffLabel(t) {
+    const type = t?.limitType ?? t?.limit_type;
+    if (type === "all") return "Все видео курса";
+    if (type === "percent") return `Доступ: ${t?.limitValue ?? t?.limit_value ?? 0}%`;
+    return `Доступ к ${t?.videoLimit ?? t?.video_limit ?? t?.limitValue ?? t?.limit_value ?? 0} видео`;
+  }
 
-    const msg = `Хочу купить курс: ${courseDetails.title}
-Преподаватель: ${teacher.name}
-Тариф: ${tariff.name}
-Цена: ${tariff.price} сом`;
+  function generateWhatsAppTariffLink(tariffId) {
+    // тут тарифы опущены (у тебя они из контекста были), оставил как было бы
+    const msg = `Хочу купить курс: ${getCourseTitle(course)}
+Преподаватель: ${teacherName}
+Тариф: ${tariffId}
+Цена: ? сом`;
 
     return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
   }
@@ -539,8 +907,8 @@ export function CoursePage() {
 
     const list = selectedLessons.map((l, i) => `${i + 1}) ${l.title}`).join("\n");
 
-    const msg = `Хочу доступ к урокам курса: ${courseDetails.title}
-Преподаватель: ${teacher.name}
+    const msg = `Хочу доступ к урокам курса: ${getCourseTitle(course)}
+Преподаватель: ${teacherName}
 Нужно уроков: ${count}
 
 Список уроков:
@@ -549,7 +917,7 @@ ${list}`;
     return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
   }
 
-  if (!course || !courseDetails) {
+  if (!course && !courseLoading) {
     return (
       <div className="min-h-screen bg-gray-50">
         <div className="app-container py-12">
@@ -568,9 +936,10 @@ ${list}`;
     );
   }
 
+  const coverUrl = FALLBACK_COVER;
+
   return (
     <div className="min-h-screen bg-gray-50 overflow-x-hidden">
-      {/* ✅ HERO FULL-WIDTH */}
       <section className={`relative text-white overflow-hidden ${fullBleed}`}>
         <div
           className="absolute inset-0 bg-cover bg-center"
@@ -580,184 +949,139 @@ ${list}`;
         <div className="absolute inset-0 bg-gradient-to-r from-blue-700/85 to-purple-700/75" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/20 to-transparent" />
 
-        {/* ✅ контент hero — app-container */}
         <div className="relative app-container py-12">
           <div className="max-w-4xl">
             <div className="flex flex-wrap items-center gap-3">
               <Badge className="bg-white/15 text-white border-white/20" variant="secondary">
-                {category?.name || "Категория"}
+                {categoryName}
               </Badge>
+
               <span className="inline-flex items-center gap-2 text-sm bg-white/10 border border-white/15 rounded-md px-3 py-2">
                 <BookOpen className="w-4 h-4" />
-                {(courseDetails.lessonsCount ?? lessons.length) || 0} уроков
+                {Number(course?.lessonsCount ?? course?._raw?.lessons_count ?? lessons.length ?? 0)} уроков
               </span>
+
               <span className="inline-flex items-center gap-2 text-sm bg-white/10 border border-white/15 rounded-md px-3 py-2">
                 <GraduationCap className="w-4 h-4" />
-                {teacher?.name || "—"}
+                {teacherName}
               </span>
             </div>
 
-            <h1 className="text-4xl sm:text-5xl mt-4 leading-tight">{courseDetails.title}</h1>
-            <p className="text-lg sm:text-xl text-white/90 mt-3 max-w-3xl">{courseDetails.description}</p>
-
-            <div className="mt-6 flex items-center gap-3">
-              <div className="w-11 h-11 rounded-full overflow-hidden border border-white/25 bg-white/10">
-                <img
-                  src={teacherImg}
-                  alt={teacher?.name || "Teacher"}
-                  className="w-full h-full object-cover"
-                  loading="lazy"
-                />
-              </div>
-              <div className="leading-tight">
-                <div className="font-semibold">{teacher?.name || "—"}</div>
-                <div className="text-sm text-white/80">Преподаватель курса</div>
-              </div>
-            </div>
+            <h1 className="text-4xl sm:text-5xl mt-4 leading-tight">{getCourseTitle(course)}</h1>
+            <p className="text-lg sm:text-xl text-white/90 mt-3 max-w-3xl">{getCourseDesc(course)}</p>
           </div>
         </div>
 
         <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-gray-50 to-transparent" />
       </section>
 
-      {/* ✅ BODY — app-container */}
       <div className="app-container py-10">
         <div className="grid lg:grid-cols-3 gap-8">
-          {/* LEFT */}
           <div className="lg:col-span-2 space-y-6">
             <Card className="border-0 shadow-sm">
-              <CardHeader>
-                <CardTitle>О преподавателе</CardTitle>
-              </CardHeader>
-              <CardContent className="flex gap-4">
-                <div className="w-12 h-12 rounded-xl overflow-hidden bg-gray-200 shrink-0">
-                  <img
-                    src={teacherImg}
-                    alt={teacher?.name || "Teacher"}
-                    className="w-full h-full object-cover"
-                    loading="lazy"
-                  />
-                </div>
-                <p className="text-gray-700 leading-relaxed">{teacher?.bio || "—"}</p>
-              </CardContent>
-            </Card>
-
-            <Card className="border-0 shadow-sm">
-              <CardHeader className="flex flex-row items-center justify-between gap-4">
+              <CardHeader className="flex flex-row items-center justify-between gap-3">
                 <CardTitle>Программа курса</CardTitle>
+                <Button variant="outline" onClick={() => loadLessons()} disabled={lessonsLoading}>
+                  Обновить
+                </Button>
               </CardHeader>
 
               <CardContent>
-                <div className="space-y-3">
-                  {lessons.map((lesson, index) => {
-                    const isSelected = selectedLessonIds.includes(lesson.id);
+                {lessonsLoading && (
+                  <div className="py-6 text-center text-gray-600">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-700 mx-auto" />
+                    <div className="mt-2">Загружаем уроки...</div>
+                  </div>
+                )}
 
-                    return (
-                      <div
-                        key={lesson.id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => toggleSelectLesson(lesson.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") toggleSelectLesson(lesson.id);
-                        }}
-                        className={[
-                          "group flex items-start gap-3 p-4 rounded-2xl border transition cursor-pointer",
-                          "bg-white hover:bg-gray-50",
-                          isSelected ? "border-green-300 ring-1 ring-green-200" : "border-gray-200",
-                        ].join(" ")}
-                      >
+                {!lessonsLoading && lessons.length === 0 && lessonsState.mode === "backend_not_ready" && (
+                  <div className="py-6 text-center">
+                    <div className="text-gray-900 font-semibold">Уроки скрыты сервером</div>
+                    <div className="mt-2 text-sm text-gray-600">{lessonsState.message}</div>
+                    <div className="mt-4">
+                      <Button onClick={() => loadLessons()}>Проверить снова</Button>
+                    </div>
+                  </div>
+                )}
+
+                {!lessonsLoading && lessons.length === 0 && lessonsState.mode === "course_empty" && (
+                  <div className="py-6 text-center text-gray-600">Пока уроки не добавлены.</div>
+                )}
+
+                {!lessonsLoading && lessons.length > 0 && (
+                  <div className="space-y-3">
+                    {lessons.map((lesson, index) => {
+                      const isSelected = selectedLessonIds.includes(lesson.id);
+
+                      return (
                         <div
+                          key={lesson.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => toggleSelectLesson(lesson.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") toggleSelectLesson(lesson.id);
+                          }}
                           className={[
-                            "flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-sm mt-0.5 font-semibold",
-                            isSelected ? "bg-green-600 text-white" : "bg-gray-100 text-gray-900",
+                            "group flex items-start gap-3 p-4 rounded-2xl border transition cursor-pointer",
+                            "bg-white hover:bg-gray-50",
+                            isSelected ? "border-green-300 ring-1 ring-green-200" : "border-gray-200",
                           ].join(" ")}
                         >
-                          {index + 1}
-                        </div>
+                          <div
+                            className={[
+                              "flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-sm mt-0.5 font-semibold",
+                              isSelected ? "bg-green-600 text-white" : "bg-gray-100 text-gray-900",
+                            ].join(" ")}
+                          >
+                            {index + 1}
+                          </div>
 
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0">
-                              <h4 className="font-semibold text-gray-900 truncate">{lesson.title}</h4>
-                              <p className="text-sm text-gray-600 mt-1 line-clamp-2">{lesson.description}</p>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="min-w-0">
+                                <h4 className="font-semibold text-gray-900 truncate">{lesson.title}</h4>
+                                <p className="text-sm text-gray-600 mt-1 line-clamp-2">{lesson.description}</p>
 
-                              {lesson.homeworkDescription ? (
-                                <div className="mt-2 text-xs text-blue-700 inline-flex items-center gap-1 bg-blue-50 border border-blue-100 rounded-full px-3 py-1">
-                                  <CheckCircle className="w-3.5 h-3.5" />
-                                  Домашнее задание
-                                </div>
-                              ) : null}
+                                {lesson.homeworkDescription ? (
+                                  <div className="mt-2 text-xs text-blue-700 inline-flex items-center gap-1 bg-blue-50 border border-blue-100 rounded-full px-3 py-1">
+                                    <CheckCircle className="w-3.5 h-3.5" />
+                                    Домашнее задание
+                                  </div>
+                                ) : null}
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openPreview(lesson.id);
+                                }}
+                                className="shrink-0 inline-flex items-center gap-2 text-sm px-3 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-300 transition"
+                                aria-label="Смотреть"
+                              >
+                                <PlayCircle className="w-5 h-5 text-gray-700" />
+                                <span className="hidden sm:inline text-gray-800">Смотреть</span>
+                              </button>
                             </div>
-
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openPreview(lesson.id);
-                              }}
-                              className="shrink-0 inline-flex items-center gap-2 text-sm px-3 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-300 transition"
-                              aria-label="Смотреть"
-                            >
-                              <PlayCircle className="w-5 h-5 text-gray-700" />
-                              <span className="hidden sm:inline text-gray-800">Смотреть</span>
-                            </button>
-                          </div>
-
-                          <div className="sm:hidden mt-2 text-xs text-gray-500">
-                            Нажми на карточку — выберешь урок. Нажми “Смотреть” — откроется превью.
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
 
-          {/* RIGHT */}
           <div className="space-y-6">
             <Card className="border-0 shadow-sm lg:sticky lg:top-24">
               <CardHeader>
-                <CardTitle>Тарифы и покупка</CardTitle>
+                <CardTitle>Покупка</CardTitle>
               </CardHeader>
 
               <CardContent className="space-y-6">
                 <div ref={tariffsRef} />
-
-                <div className="space-y-3">
-                  {(courseDetails.tariffs || []).map((tariff) => (
-                    <div
-                      key={tariff.id}
-                      className="rounded-2xl border border-gray-200 p-4 bg-white hover:border-blue-600 hover:shadow-sm transition"
-                    >
-                      <div className="flex justify-between items-start gap-3">
-                        <div className="min-w-0">
-                          <div className="font-semibold text-gray-900">{tariff.name}</div>
-                          <div className="text-sm text-gray-600 mt-1">
-                            {tariff.videoCount === -1 ? "Все видео курса" : `Доступ к ${tariff.videoCount} видео`}
-                          </div>
-                        </div>
-                        <div className="text-2xl font-extrabold text-blue-600 whitespace-nowrap">
-                          {tariff.price} сом
-                        </div>
-                      </div>
-
-                      <a
-                        href={generateWhatsAppTariffLink(tariff.id)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block mt-4"
-                      >
-                        <Button className="w-full">
-                          <ShoppingCart className="w-4 h-4 mr-2" />
-                          Купить тариф
-                        </Button>
-                      </a>
-                    </div>
-                  ))}
-                </div>
 
                 <div className="rounded-2xl border border-gray-200 p-4 bg-white">
                   <div className="flex items-center justify-between">
@@ -785,9 +1109,7 @@ ${list}`;
                       ))}
                     </div>
                   ) : (
-                    <p className="mt-2 text-sm text-gray-600">
-                      Выбери уроки слева — и купи их одним сообщением.
-                    </p>
+                    <p className="mt-2 text-sm text-gray-600">Выбери уроки слева — и купи их одним сообщением.</p>
                   )}
 
                   <a
@@ -801,23 +1123,12 @@ ${list}`;
                     </Button>
                   </a>
                 </div>
-
-                <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100">
-                  <p className="text-sm text-gray-700">
-                    После покупки вы получите токен доступа — активируйте его в{" "}
-                    <Link to="/dashboard" className="text-blue-700 hover:underline font-medium">
-                      личном кабинете
-                    </Link>
-                    .
-                  </p>
-                </div>
               </CardContent>
             </Card>
           </div>
         </div>
       </div>
 
-      {/* MODAL PREVIEW */}
       {isPreviewOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/70" />
@@ -837,10 +1148,20 @@ ${list}`;
 
             <div className="relative bg-gray-950">
               <div ref={ytWrapRef} className="relative w-full" style={{ paddingBottom: "56.25%" }}>
-                <div ref={ytMountRef} className="absolute inset-0 w-full h-full" />
+                {/* ✅ если YT API не загрузился — iframe fallback */}
+                {fallbackIframeId ? (
+                  <iframe
+                    title="lesson-video"
+                    className="absolute inset-0 w-full h-full"
+                    src={`https://www.youtube-nocookie.com/embed/${fallbackIframeId}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
+                    allow="autoplay; encrypted-media; picture-in-picture"
+                    allowFullScreen
+                  />
+                ) : (
+                  <div ref={ytMountRef} className="absolute inset-0 w-full h-full" />
+                )}
 
-                {/* ✅ Плёнка поверх iframe: перехватываем клики и НЕ даём открыть YouTube */}
-                {!videoError && !isPaywallOpen && !isVideoEnded && (
+                {!videoError && !isPaywallOpen && !isVideoEnded && !fallbackIframeId && (
                   <div
                     className="absolute inset-0 z-20"
                     onMouseMove={showControls}
@@ -848,10 +1169,6 @@ ${list}`;
                       e.preventDefault();
                       e.stopPropagation();
                       togglePlay();
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
                     }}
                     onContextMenu={(e) => {
                       e.preventDefault();
@@ -862,7 +1179,7 @@ ${list}`;
                   />
                 )}
 
-                {!isVideoReady && !videoError && (
+                {!isVideoReady && !videoError && !fallbackIframeId && (
                   <div className="absolute inset-0 flex items-center justify-center z-30">
                     <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white" />
                   </div>
@@ -875,8 +1192,8 @@ ${list}`;
                   </div>
                 )}
 
-                {/* ✅ Кастом контролы (никаких YouTube кнопок/ссылок) */}
-                {!videoError && !isPaywallOpen && !isVideoEnded && (
+                {/* Контролы доступны только для YT API режима */}
+                {!videoError && !isPaywallOpen && !isVideoEnded && !fallbackIframeId && (
                   <div
                     className={[
                       "absolute left-0 right-0 bottom-0 z-40 px-3 pb-3 pt-10",
@@ -884,8 +1201,7 @@ ${list}`;
                       controlsVisible ? "opacity-100" : "opacity-0",
                     ].join(" ")}
                     style={{
-                      background:
-                        "linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.0))",
+                      background: "linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0.0))",
                       pointerEvents: "none",
                     }}
                   >
@@ -941,18 +1257,18 @@ ${list}`;
                         className="h-10 px-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white"
                         aria-label="Полноэкранный режим"
                       >
-                        {isFs ? "⤢" : "⤢"}
+                        {isFs ? "⤡" : "⤢"}
                       </button>
                     </div>
                   </div>
                 )}
 
-                {/* ✅ Перекрываем end-screen рекомендации */}
-                {isVideoEnded && !isPaywallOpen && !videoError && (
+                {isPaywallOpen && (
                   <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 z-30">
                     <div className="w-full max-w-md bg-white rounded-2xl p-5 shadow-xl">
-                      <div className="text-lg font-semibold">Видео закончилось</div>
-                      <p className="text-sm text-gray-600 mt-1">Рекомендации YouTube не показываем.</p>
+                      <div className="text-lg font-semibold">Нужен доступ</div>
+                      <p className="text-sm text-gray-600 mt-1">Для просмотра нужен токен/вход.</p>
+
                       <div className="mt-4 grid grid-cols-2 gap-3">
                         <Button variant="outline" onClick={closePreview}>
                           Закрыть
@@ -960,50 +1276,19 @@ ${list}`;
                         <Button
                           onClick={() => {
                             closePreview();
-                            setTimeout(() => {
-                              scrollToTariffs();
-                            }, 100);
+                            setTimeout(() => scrollToTariffs(), 100);
                           }}
                         >
-                          Купить тариф
+                          Купить
                         </Button>
                       </div>
                     </div>
                   </div>
                 )}
               </div>
-
-              {isPaywallOpen && (
-                <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 z-30">
-                  <div className="w-full max-w-md bg-white rounded-2xl p-5 shadow-xl">
-                    <div className="text-lg font-semibold">Купите тариф, пожалуйста 🙂</div>
-                    <p className="text-sm text-gray-600 mt-1">
-                      Полный доступ откроет все уроки без ограничений и домашние задания с проверкой преподавателя.
-                    </p>
-
-                    <div className="mt-4 grid grid-cols-2 gap-3">
-                      <Button variant="outline" onClick={closePreview}>
-                        Понятно
-                      </Button>
-                      <Button
-                        onClick={() => {
-                          closePreview();
-                          setTimeout(() => {
-                            scrollToTariffs();
-                          }, 100);
-                        }}
-                      >
-                        Купить тариф
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
 
-            <div className="px-4 py-3 bg-gray-50 border-t text-sm text-gray-600">
-              
-            </div>
+            <div className="px-4 py-3 bg-gray-50 border-t text-sm text-gray-600" />
           </div>
         </div>
       )}

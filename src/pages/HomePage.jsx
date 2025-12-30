@@ -1,3 +1,4 @@
+// src/pages/HomePage.jsx
 import React, { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { BadgeCheck, Rocket, ShieldCheck, Users, BookOpen } from "lucide-react";
@@ -27,7 +28,7 @@ const getCategoryImg = (category) => {
 };
 
 const HomePage = () => {
-  const data = useData?.() || {};
+  const data = useData();
   const categories = Array.isArray(data.categories) ? data.categories : [];
   const courses = Array.isArray(data.courses) ? data.courses : [];
   const teachers = Array.isArray(data.teachers) ? data.teachers : [];
@@ -42,7 +43,7 @@ const HomePage = () => {
 
   const heroTeacher = useMemo(() => {
     const firstCourse = courses?.[0];
-    const t = firstCourse?.teacherId ? teacherById.get(firstCourse.teacherId) : null;
+    const t = firstCourse?.teacherId ? teacherById.get(firstCourse.teacherId) : firstCourse?.teacher || null;
     return t || teachers?.[0] || null;
   }, [courses, teachers, teacherById]);
 
@@ -50,20 +51,15 @@ const HomePage = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 overflow-x-hidden">
-      {/* HERO: фон 100% ширины экрана, контент по .app-container */}
+      {/* HERO */}
       <section
         className="relative overflow-hidden h-[100svh] min-h-screen w-screen"
         style={{ marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)" }}
       >
-        <div
-          className="absolute inset-0 bg-cover bg-center"
-          style={{ backgroundImage: `url(${heroBg})` }}
-          aria-hidden="true"
-        />
+        <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${heroBg})` }} aria-hidden="true" />
         <div className="absolute inset-0 bg-gradient-to-b from-black/75 via-black/55 to-black/70" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_20%,rgba(99,102,241,.25),transparent_55%),radial-gradient(circle_at_80%_30%,rgba(168,85,247,.22),transparent_55%)]" />
 
-        {/* Контент HERO ровно по контейнеру */}
         <div className="relative app-container pt-12 pb-12 sm:pt-16 sm:pb-16 lg:pt-20 lg:pb-20">
           <div className="max-w-3xl text-white">
             <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs sm:text-sm">
@@ -92,7 +88,6 @@ const HomePage = () => {
         <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-gray-50 to-transparent" />
       </section>
 
-      {/* ✅ ВСЁ НИЖЕ HERO — В КОНТЕЙНЕРЕ */}
       <div className="app-container">
         <section className="mt-10 sm:mt-12">
           <Card className="border shadow-xl rounded-2xl overflow-hidden">
@@ -148,35 +143,15 @@ const HomePage = () => {
 
           <div className="grid md:grid-cols-3 gap-6">
             {categories.map((category) => (
-              <Link key={category.id} to={`/category/${category.slug}`} className="block h-full">
+              <Link key={category.id} to={`/category/${category.id}`} className="block h-full">
                 <Card className="h-full min-h-[150px] hover:shadow-lg transition cursor-pointer">
-                  <div
-                    className="h-[120px] w-full bg-cover bg-center rounded-t-xl"
-                    style={{ backgroundImage: `url(${getCategoryImg(category)})` }}
-                    aria-hidden="true"
-                  />
+                  <div className="h-[120px] w-full bg-cover bg-center rounded-t-xl" style={{ backgroundImage: `url(${getCategoryImg(category)})` }} aria-hidden="true" />
                   <div className="p-6 flex flex-col h-full">
-                    <div
-                      className="text-xl font-semibold leading-snug overflow-hidden"
-                      style={{
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                      }}
-                      title={category.name}
-                    >
+                    <div className="text-xl font-semibold leading-snug overflow-hidden" style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
                       {category.name}
                     </div>
 
-                    <div
-                      className="mt-2 text-gray-600 overflow-hidden"
-                      style={{
-                        display: "-webkit-box",
-                        WebkitLineClamp: 3,
-                        WebkitBoxOrient: "vertical",
-                      }}
-                      title={category.description}
-                    >
+                    <div className="mt-2 text-gray-600 overflow-hidden" style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>
                       {category.description}
                     </div>
 
@@ -199,9 +174,7 @@ const HomePage = () => {
                     <Rocket className="w-5 h-5 text-blue-600" />
                     Учимся с нуля
                   </div>
-                  <div className="mt-2 text-xs sm:text-sm text-gray-600">
-                    Программа адаптирована для новичков
-                  </div>
+                  <div className="mt-2 text-xs sm:text-sm text-gray-600">Программа адаптирована для новичков</div>
                 </div>
 
                 <div className="rounded-xl border bg-gray-50 p-4">
@@ -209,9 +182,7 @@ const HomePage = () => {
                     <ShieldCheck className="w-5 h-5 text-purple-600" />
                     Доступ по токену
                   </div>
-                  <div className="mt-2 text-xs sm:text-sm text-gray-600">
-                    Видео не “уходят” на YouTube ссылкой
-                  </div>
+                  <div className="mt-2 text-xs sm:text-sm text-gray-600">Видео не “уходят” на YouTube ссылкой</div>
                 </div>
 
                 <div className="rounded-xl border bg-gray-50 p-4">
@@ -219,9 +190,7 @@ const HomePage = () => {
                     <Users className="w-5 h-5 text-green-600" />
                     Проверка ДЗ
                   </div>
-                  <div className="mt-2 text-xs sm:text-sm text-gray-600">
-                    Принято / На доработку — всё прозрачно
-                  </div>
+                  <div className="mt-2 text-xs sm:text-sm text-gray-600">Принято / На доработку — всё прозрачно</div>
                 </div>
 
                 <div className="rounded-xl border bg-gray-50 p-4">
@@ -229,9 +198,7 @@ const HomePage = () => {
                     <BookOpen className="w-5 h-5 text-orange-600" />
                     Короткие уроки
                   </div>
-                  <div className="mt-2 text-xs sm:text-sm text-gray-600">
-                    Смотрите по 10–20 минут, без перегруза
-                  </div>
+                  <div className="mt-2 text-xs sm:text-sm text-gray-600">Смотрите по 10–20 минут, без перегруза</div>
                 </div>
               </div>
             </CardContent>
@@ -243,15 +210,12 @@ const HomePage = () => {
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {courses.slice(0, 3).map((course) => {
-              const teacher = course?.teacherId ? teacherById.get(course.teacherId) : null;
+              const teacher = course?.teacherId ? teacherById.get(course.teacherId) : course?.teacher || null;
+
               return (
-                <Link key={course.id} to={`/course/${course.slug}`} className="block h-full">
+                <Link key={course.id} to={`/course/${course.id}`} className="block h-full">
                   <Card className="hover:shadow-lg transition cursor-pointer h-full flex flex-col">
-                    <div
-                      className="h-[140px] w-full bg-cover bg-center rounded-t-xl"
-                      style={{ backgroundImage: `url(${getTeacherImg(teacher)})` }}
-                      aria-hidden="true"
-                    />
+                    <div className="h-[140px] w-full bg-cover bg-center rounded-t-xl" style={{ backgroundImage: `url(${getTeacherImg(teacher)})` }} aria-hidden="true" />
                     <div className="p-6 flex-1">
                       <div className="text-xl font-semibold">{course.title}</div>
                       <div className="text-gray-600 mt-2">{course.description}</div>

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.jsx";
 
@@ -13,21 +13,57 @@ import {
 } from "../components/ui/card.jsx";
 import { Alert, AlertDescription } from "../components/ui/alert.jsx";
 
+const norm = (s) => String(s ?? "").trim();
+
+function getAfterLoginPath(role) {
+  const r = norm(role).toLowerCase();
+  if (r === "teacher" || r === "admin") return "/teacher";
+  if (r === "student") return "/dashboard";
+  return "/";
+}
+
 export function LoginPage() {
+  const { login, user, isLoading } = useAuth();
+  const navigate = useNavigate();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
 
-  const { login } = useAuth();
-  const navigate = useNavigate();
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+
+  const canSubmit = useMemo(() => {
+    return !!norm(email) && !!norm(password) && !pending && !isLoading;
+  }, [email, password, pending, isLoading]);
+
+  useEffect(() => {
+    // Если уже залогинен — не держим на /login
+    if (!isLoading && user) {
+      navigate(getAfterLoginPath(user.role), { replace: true });
+    }
+  }, [isLoading, user, navigate]);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setError("");
+    if (!canSubmit) return;
 
-    const ok = await login(email, password);
-    if (ok) navigate("/");
-    else setError("Неверный email или пароль");
+    setError("");
+    setPending(true);
+
+    try {
+      const ok = await login(norm(email), password);
+
+      if (!ok) {
+        setError("Неверный email или пароль");
+        return;
+      }
+
+      // роли подтянутся в AuthContext через /auth/me/
+      // но на всякий случай направим на главную, дальше useEffect отработает
+      navigate("/", { replace: true });
+    } finally {
+      setPending(false);
+    }
   }
 
   return (
@@ -53,7 +89,9 @@ export function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 type="email"
                 placeholder="name@example.com"
+                autoComplete="email"
                 required
+                disabled={pending || isLoading}
               />
             </div>
 
@@ -64,30 +102,22 @@ export function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Введите пароль"
+                autoComplete="current-password"
                 required
+                disabled={pending || isLoading}
               />
             </div>
 
-            <Button type="submit" className="w-full">
-              Войти
+            <Button type="submit" className="w-full" disabled={!canSubmit}>
+              {pending ? "Входим..." : "Войти"}
             </Button>
           </form>
 
-          {/* ✅ Ссылка на регистрацию */}
           <div className="mt-5 text-sm text-gray-600 text-center">
             Нет аккаунта?{" "}
             <Link to="/register" className="text-blue-700 hover:underline font-medium">
               Регистрация
             </Link>
-          </div>
-
-          <div className="mt-6 p-4 bg-gray-100 rounded-lg">
-            <p className="text-sm mb-2">Тестовые аккаунты:</p>
-            <div className="space-y-1 text-xs">
-              <p>Студент: student@example.com</p>
-              <p>Преподаватель: teacher@example.com</p>
-              <p className="text-gray-500 mt-2">Пароль: любой</p>
-            </div>
           </div>
         </CardContent>
       </Card>
