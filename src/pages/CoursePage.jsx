@@ -1,4 +1,3 @@
-// src/pages/CoursePage.jsx
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Link, useParams, useLocation } from "react-router-dom";
 import axios from "axios";
@@ -39,11 +38,16 @@ function getCourseDesc(obj) {
 }
 function getTeacherNameFromAny(obj) {
   return (
+    obj?.instructor_name ||
+    obj?.instructorName ||
     obj?.teacherName ||
     obj?.teacher_name ||
     obj?.teacher?.full_name ||
     obj?.teacher?.username ||
     obj?.teacher?.email ||
+    obj?.instructor?.full_name ||
+    obj?.instructor?.username ||
+    obj?.instructor?.email ||
     "—"
   );
 }
@@ -51,24 +55,42 @@ function getCategoryNameFromAny(obj) {
   return obj?.categoryName || obj?.category_name || obj?.category?.name || obj?.category_title || "";
 }
 function getCourseTeacherId(obj) {
-  return obj?.teacherId ?? obj?.teacher_id ?? obj?.teacher ?? obj?.teacher?.id ?? null;
+  return (
+    obj?.instructor_id ??
+    obj?.instructorId ??
+    obj?.teacherId ??
+    obj?.teacher_id ??
+    obj?.teacher ??
+    obj?.teacher?.id ??
+    obj?.instructor ??
+    obj?.instructor?.id ??
+    null
+  );
 }
 function getCourseCategoryId(obj) {
   return obj?.categoryId ?? obj?.category_id ?? obj?.category ?? obj?.category?.id ?? null;
 }
 
+/**
+ * ✅ Берём видео строго из youtube_video_id (или совместимых полей),
+ * т.к. по твоей схеме /lessons/{id} — это основной источник.
+ */
 function pickLessonVideo(obj) {
-  // важные поля: video_url и youtube_video_id (в teacher/lessons они readOnly)
   const v =
-    obj?.video_url ||
-    obj?.videoUrl ||
-    obj?.video ||
     obj?.youtube_video_id ||
     obj?.youtubeVideoId ||
     obj?.youtube_id ||
+    obj?.video_url ||
+    obj?.videoUrl ||
+    obj?.video ||
     obj?.url ||
     "";
   return String(v || "").trim();
+}
+
+function normalizeLessonCourseId(l) {
+  const cid = l?.courseId ?? l?.course_id ?? l?.course ?? l?.course?.id ?? "";
+  return String(cid || "");
 }
 
 function extractLessonsFromCourse(courseLike) {
@@ -88,10 +110,11 @@ function extractLessonsFromCourse(courseLike) {
     title: l?.title || l?.name || `Урок ${idx + 1}`,
     description: l?.description || "",
     order: l?.order ?? idx + 1,
-    videoUrl: pickLessonVideo(l),
+    videoUrl: pickLessonVideo(l), // ✅ уже учитывает youtube_video_id
     youtubeStatus: String(l?.youtube_status || ""),
     youtubeError: String(l?.youtube_error || ""),
     homeworkDescription: l?.homework_description || "",
+    courseId: normalizeLessonCourseId(l),
     _raw: l,
   }));
 }
@@ -100,18 +123,14 @@ function getYouTubeId(input) {
   const s = String(input || "").trim();
   if (!s) return "";
 
-  // чистый 11-симв id
   if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
 
-  // youtu.be/ID
   const short = s.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
   if (short?.[1]) return short[1];
 
-  // watch?v=ID
   const v = s.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
   if (v?.[1]) return v[1];
 
-  // /embed/ID
   const emb = s.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/);
   if (emb?.[1]) return emb[1];
 
@@ -133,7 +152,6 @@ function getAccessTokenAny() {
   }
 }
 
-/** безопасный GET с перебором путей */
 async function tryGet(apiInstance, paths, config = {}) {
   let last = null;
   for (const p of paths) {
@@ -149,7 +167,6 @@ async function tryGet(apiInstance, paths, config = {}) {
   return { ok: false, error: last?.message || "Ошибка запроса" };
 }
 
-/** безопасный POST с перебором путей */
 async function tryPost(apiInstance, paths, payload, config = {}) {
   let last = null;
   for (const p of paths) {
@@ -165,7 +182,6 @@ async function tryPost(apiInstance, paths, payload, config = {}) {
   return { ok: false, error: last?.message || "Ошибка запроса" };
 }
 
-/** YT API loader */
 function ensureYouTubeScriptWithTimeout(ms = 3500) {
   return new Promise((resolve) => {
     if (window.YT && window.YT.Player) return resolve(true);
@@ -219,6 +235,26 @@ const fmtTime = (sec) => {
   return `${m}:${String(r).padStart(2, "0")}`;
 };
 
+function moneySom(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return "—";
+  return `${s} сом`;
+}
+
+function normalizeTariff(t) {
+  return {
+    id: String(t?.id ?? ""),
+    title: String(t?.title ?? ""),
+    price: String(t?.price ?? ""),
+    limitType: String(t?.limit_type ?? t?.limitType ?? ""),
+    limitValue: Number(t?.limit_value ?? t?.limitValue ?? 0),
+    videoLimit: Number(t?.video_limit ?? t?.videoLimit ?? 0),
+    courseId: String(t?.course ?? t?.course_id ?? t?.courseId ?? ""),
+    courseTitle: String(t?.course_title ?? t?.courseTitle ?? ""),
+    _raw: t,
+  };
+}
+
 export function CoursePage() {
   const params = useParams();
   const courseId = pickCourseIdFromParams(params);
@@ -226,13 +262,13 @@ export function CoursePage() {
   const location = useLocation();
   const preview = location?.state?.coursePreview || null;
 
-  // ✅ public api всегда через /api (под Vite proxy) — НЕ напрямую на домен
   const publicApi = useMemo(() => axios.create({ baseURL: "/api", timeout: 20000 }), []);
   const privateApi = useMemo(() => authApi, []);
 
   const [course, setCourse] = useState(() => {
     const pid = getCourseId(preview);
     if (pid != null && String(pid) === String(courseId)) return preview;
+    if (preview?.slug && String(preview.slug) === String(courseId)) return preview;
     return null;
   });
 
@@ -240,10 +276,11 @@ export function CoursePage() {
 
   const [lessons, setLessons] = useState([]);
   const [lessonsLoading, setLessonsLoading] = useState(false);
-  const [lessonsState, setLessonsState] = useState({
-    mode: "idle",
-    message: "",
-  });
+  const [lessonsState, setLessonsState] = useState({ mode: "idle", message: "" });
+
+  const [tariffs, setTariffs] = useState([]);
+  const [tariffsLoading, setTariffsLoading] = useState(false);
+  const [tariffsError, setTariffsError] = useState("");
 
   const [selectedLessonIds, setSelectedLessonIds] = useState([]);
   const [activeLessonId, setActiveLessonId] = useState(null);
@@ -262,7 +299,7 @@ export function CoursePage() {
   const [isFs, setIsFs] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
 
-  const [fallbackIframeId, setFallbackIframeId] = useState(""); // ✅ fallback если YT API не загрузился
+  const [fallbackIframeId, setFallbackIframeId] = useState("");
 
   const tariffsRef = useRef(null);
   const playRequestedRef = useRef(false);
@@ -275,7 +312,7 @@ export function CoursePage() {
   const progTimerRef = useRef(null);
 
   // ---------------------------
-  // LOAD COURSE (public)
+  // LOAD COURSE (public) + merge with preview
   // ---------------------------
   const loadCourse = useCallback(async () => {
     const cid = String(courseId || "").trim();
@@ -291,31 +328,75 @@ export function CoursePage() {
 
       const fetched = res.data;
 
-      setCourse({
-        id: getCourseId(fetched) ?? cid,
-        title: getCourseTitle(fetched),
-        description: getCourseDesc(fetched),
-        lessonsCount: fetched?.lessonsCount ?? fetched?.lessons_count ?? 0,
-        teacherId: getCourseTeacherId(fetched),
-        categoryId: getCourseCategoryId(fetched),
-        teacherName: getTeacherNameFromAny(fetched),
-        categoryName: getCategoryNameFromAny(fetched),
+      const merged = {
+        id: getCourseId(fetched) ?? preview?.id ?? cid,
+        title: getCourseTitle(fetched) || preview?.title || "Курс",
+        description: getCourseDesc(fetched) || preview?.description || "",
+        lessonsCount: fetched?.lessonsCount ?? fetched?.lessons_count ?? preview?.lessonsCount ?? 0,
+        teacherId: getCourseTeacherId(fetched) ?? preview?.teacherId ?? null,
+        categoryId: getCourseCategoryId(fetched) ?? preview?.categoryId ?? null,
+        teacherName:
+          getTeacherNameFromAny(fetched) !== "—"
+            ? getTeacherNameFromAny(fetched)
+            : preview?.teacherName || "—",
+        categoryName: getCategoryNameFromAny(fetched) || preview?.categoryName || "",
         _raw: fetched,
-      });
+      };
+
+      setCourse(merged);
     } finally {
       setCourseLoading(false);
     }
-  }, [courseId, publicApi]);
+  }, [courseId, publicApi, preview]);
 
   useEffect(() => {
     loadCourse();
   }, [loadCourse]);
 
-  const categoryName = useMemo(() => getCategoryNameFromAny(course) || "Категория", [course]);
-  const teacherName = useMemo(() => getTeacherNameFromAny(course) || "—", [course]);
+  const categoryName = useMemo(
+    () => getCategoryNameFromAny(course) || course?.categoryName || "Категория",
+    [course]
+  );
+  const teacherName = useMemo(() => getTeacherNameFromAny(course) || course?.teacherName || "—", [course]);
 
   // ---------------------------
-  // LOAD LESSONS
+  // LOAD TARIFFS
+  // ---------------------------
+  const loadTariffs = useCallback(async () => {
+    const cid = getCourseId(course) ?? courseId;
+    if (!cid) return;
+
+    setTariffsLoading(true);
+    setTariffsError("");
+
+    try {
+      let res = await tryGet(publicApi, ["/tariffs/", "/vitrina/tariffs/"], { params: { course_id: cid } });
+      let arr = extractArray(res?.data);
+
+      if (!arr.length) {
+        res = await tryGet(publicApi, ["/tariffs/", "/vitrina/tariffs/"], { params: { course: cid } });
+        arr = extractArray(res?.data);
+      }
+
+      const normed = (arr || []).map(normalizeTariff).filter((t) => t.id);
+      const filtered = normed.filter((t) => String(t.courseId || "") === String(cid));
+
+      setTariffs(filtered);
+    } catch (e) {
+      console.error(e);
+      setTariffsError("Не удалось загрузить тарифы");
+      setTariffs([]);
+    } finally {
+      setTariffsLoading(false);
+    }
+  }, [publicApi, course, courseId]);
+
+  useEffect(() => {
+    loadTariffs();
+  }, [loadTariffs]);
+
+  // ---------------------------
+  // LOAD LESSONS (строго для курса)
   // ---------------------------
   const loadLessons = useCallback(async () => {
     const cid = getCourseId(course);
@@ -325,73 +406,94 @@ export function CoursePage() {
     setLessonsState({ mode: "idle", message: "" });
 
     try {
-      // 1) embedded lessons inside course detail
       const embedded = extractLessonsFromCourse(course);
       if (embedded.length) {
-        embedded.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
-        setLessons(embedded);
+        const filtered = embedded.filter((l) => String(l.courseId || cid) === String(cid));
+        filtered.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+        setLessons(filtered);
         setLessonsState({ mode: "ok", message: "" });
         return;
       }
 
-      // 2) public lessons endpoints (пробуем несколько вариантов)
-      const pub = await tryGet(publicApi, [
-        "/lessons/public/",
-        "/vitrina/lessons/public/",
-        "/lessons/",
-        "/vitrina/lessons/",
-      ], { params: { course: cid } });
+      let pub = await tryGet(
+        publicApi,
+        ["/lessons/public/", "/vitrina/lessons/public/", "/lessons/", "/vitrina/lessons/"],
+        { params: { course_id: cid } }
+      );
 
-      const pubArr = extractArray(pub?.data);
+      let pubArr = extractArray(pub?.data);
+
+      if (!pubArr.length) {
+        pub = await tryGet(
+          publicApi,
+          ["/lessons/public/", "/vitrina/lessons/public/", "/lessons/", "/vitrina/lessons/"],
+          { params: { course: cid } }
+        );
+        pubArr = extractArray(pub?.data);
+      }
+
       if (pubArr.length) {
         const normalized = pubArr.map((l, idx) => ({
           id: l?.id ?? l?.pk ?? `lesson-${idx + 1}`,
           title: l?.title || l?.name || `Урок ${idx + 1}`,
           description: l?.description || "",
           order: l?.order ?? idx + 1,
-          videoUrl: pickLessonVideo(l),
+          videoUrl: pickLessonVideo(l), // ✅ включает youtube_video_id
           youtubeStatus: String(l?.youtube_status || ""),
           youtubeError: String(l?.youtube_error || ""),
           homeworkDescription: l?.homework_description || "",
+          courseId: normalizeLessonCourseId(l),
           _raw: l,
         }));
-        normalized.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
-        setLessons(normalized);
+
+        const filtered = normalized.filter((l) => String(l.courseId || "") === String(cid));
+        filtered.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+        setLessons(filtered);
         setLessonsState({ mode: "ok", message: "" });
         return;
       }
 
-      // 3) если есть access — пробуем приватный список (у некоторых проектов он /my-courses/lessons/)
       const access = getAccessTokenAny();
       if (access) {
-        const priv = await tryGet(privateApi, [
-          "/lessons/",
-          "/my/lessons/",
-          "/my-courses/lessons/",
-          "/student/lessons/",
-        ], { params: { course: cid } });
+        let priv = await tryGet(
+          privateApi,
+          ["/lessons/", "/my/lessons/", "/my-courses/lessons/", "/student/lessons/"],
+          { params: { course_id: cid } }
+        );
 
-        const privArr = extractArray(priv?.data);
+        let privArr = extractArray(priv?.data);
+
+        if (!privArr.length) {
+          priv = await tryGet(
+            privateApi,
+            ["/lessons/", "/my/lessons/", "/my-courses/lessons/", "/student/lessons/"],
+            { params: { course: cid } }
+          );
+          privArr = extractArray(priv?.data);
+        }
+
         if (privArr.length) {
           const normalized = privArr.map((l, idx) => ({
             id: l?.id ?? l?.pk ?? `lesson-${idx + 1}`,
             title: l?.title || l?.name || `Урок ${idx + 1}`,
             description: l?.description || "",
             order: l?.order ?? idx + 1,
-            videoUrl: pickLessonVideo(l),
+            videoUrl: pickLessonVideo(l), // ✅
             youtubeStatus: String(l?.youtube_status || ""),
             youtubeError: String(l?.youtube_error || ""),
             homeworkDescription: l?.homework_description || "",
+            courseId: normalizeLessonCourseId(l),
             _raw: l,
           }));
-          normalized.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
-          setLessons(normalized);
+
+          const filtered = normalized.filter((l) => String(l.courseId || "") === String(cid));
+          filtered.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+          setLessons(filtered);
           setLessonsState({ mode: "ok", message: "" });
           return;
         }
       }
 
-      // 4) если уроков по счетчику > 0 — значит бек не отдаёт список
       const count = Number(course?.lessonsCount ?? course?._raw?.lessons_count ?? 0);
       if (count > 0) {
         setLessons([]);
@@ -537,14 +639,33 @@ export function CoursePage() {
   }, [isPreviewOpen, closePreview]);
 
   // ---------------------------
-  // OPEN LESSON (получить видео по токену)
+  // ✅ OPEN LESSON DETAIL (вытаскиваем youtube_video_id из /lessons/{id}/)
+  // ---------------------------
+  const fetchLessonDetail = useCallback(
+    async (lessonId) => {
+      const idNum = Number(lessonId);
+      if (!Number.isFinite(idNum)) return { ok: false, lesson: null };
+
+      const res = await tryGet(privateApi, [
+        `/lessons/${idNum}/`,
+        `/student/lessons/${idNum}/`,
+        `/teacher/lessons/${idNum}/`,
+      ]);
+
+      if (!res.ok) return { ok: false, lesson: null };
+      return { ok: true, lesson: res.data };
+    },
+    [privateApi]
+  );
+
+  // ---------------------------
+  // OPEN LESSON (fallback POST)
   // ---------------------------
   const openLessonViaApi = useCallback(
     async (lessonId) => {
       const idNum = Number(lessonId);
       if (!Number.isFinite(idNum)) return { ok: false, lesson: null };
 
-      // пробуем разные пути — потому что у всех по-разному названо
       const res = await tryPost(
         privateApi,
         ["/lessons/open/", "/open-lesson/", "/lessons/open-lesson/", "/student/open-lesson/"],
@@ -665,17 +786,11 @@ export function CoursePage() {
 
     if (!fsEl) {
       const req =
-        el.requestFullscreen ||
-        el.webkitRequestFullscreen ||
-        el.mozRequestFullScreen ||
-        el.msRequestFullscreen;
+        el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
       if (req) req.call(el);
     } else {
       const exit =
-        doc.exitFullscreen ||
-        doc.webkitExitFullscreen ||
-        doc.mozCancelFullScreen ||
-        doc.msExitFullscreen;
+        doc.exitFullscreen || doc.webkitExitFullscreen || doc.mozCancelFullScreen || doc.msExitFullscreen;
       if (exit) exit.call(doc);
     }
     showControls();
@@ -688,15 +803,13 @@ export function CoursePage() {
   }, []);
 
   // ---------------------------
-  // INIT PLAYER (YT API + fallback iframe)
+  // INIT PLAYER
   // ---------------------------
   const initYouTubePlayer = useCallback(
     async (videoId) => {
-      // пробуем YT API, если не загрузился — fallback iframe
       const ok = await ensureYouTubeScriptWithTimeout(3500);
 
       if (!ok) {
-        // ✅ fallback: iframe (видео будет видно почти всегда)
         setFallbackIframeId(videoId);
         setIsVideoReady(true);
         setVideoError("");
@@ -786,7 +899,7 @@ export function CoursePage() {
               }
             },
             onError: () => {
-              setVideoError("Видео не воспроизводится. Проверь video_url/youtube_video_id на бэке.");
+              setVideoError("Видео не воспроизводится. Проверь youtube_video_id на бэке.");
               setIsVideoReady(false);
               setIsVideoEnded(false);
               setIsPlaying(false);
@@ -804,17 +917,10 @@ export function CoursePage() {
         stopProgTimer();
       }
     },
-    [
-      destroyYouTubePlayer,
-      startYouTubeTimer,
-      stopYouTubeTimer,
-      startProgTimer,
-      stopProgTimer,
-      showControls,
-    ]
+    [destroyYouTubePlayer, startYouTubeTimer, stopYouTubeTimer, startProgTimer, stopProgTimer, showControls]
   );
 
-  // при открытии превью: берем видео из урока, если пусто — пробуем openLesson
+  // при открытии превью: берем видео из урока, если пусто — тянем detail /lessons/{id}/ и только потом fallback openLesson
   useEffect(() => {
     let alive = true;
 
@@ -841,8 +947,25 @@ export function CoursePage() {
       let raw = String(l?.videoUrl || pickLessonVideo(l?._raw) || "").trim();
       let ytId = getYouTubeId(raw);
 
-      // если бек не отдал видео в списке — пробуем открыть урок токеном
-      if (!raw || !ytId) {
+      // ✅ если в списке уроков нет youtube_video_id — берём из /lessons/{id}/
+      if (!ytId) {
+        const access = getAccessTokenAny();
+        if (!access) {
+          setIsPaywallOpen(true);
+          setVideoError("Чтобы открыть видео, нужен вход/токен.");
+          return;
+        }
+
+        const detail = await fetchLessonDetail(l.id);
+        if (!alive) return;
+
+        const detailVideo = pickLessonVideo(detail?.lesson);
+        raw = String(detailVideo || raw || "").trim();
+        ytId = getYouTubeId(raw);
+      }
+
+      // ✅ fallback: если detail недоступен — пробуем твой openLesson POST
+      if (!ytId) {
         const access = getAccessTokenAny();
         if (!access) {
           setIsPaywallOpen(true);
@@ -854,12 +977,12 @@ export function CoursePage() {
         if (!alive) return;
 
         const openedVideo = pickLessonVideo(opened?.lesson);
-        raw = String(openedVideo || "").trim();
+        raw = String(openedVideo || raw || "").trim();
         ytId = getYouTubeId(raw);
       }
 
       if (!raw) {
-        setVideoError("В этом уроке нет видео (поля video_url / youtube_video_id пустые на сервере).");
+        setVideoError("В этом уроке нет видео (youtube_video_id пустой на сервере).");
         return;
       }
 
@@ -876,7 +999,7 @@ export function CoursePage() {
     return () => {
       alive = false;
     };
-  }, [isPreviewOpen, activeLesson, openLessonViaApi, initYouTubePlayer]);
+  }, [isPreviewOpen, activeLesson, fetchLessonDetail, openLessonViaApi, initYouTubePlayer]);
 
   const scrollToTariffs = useCallback(() => {
     const el = tariffsRef.current;
@@ -884,19 +1007,11 @@ export function CoursePage() {
     el.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  function getTariffLabel(t) {
-    const type = t?.limitType ?? t?.limit_type;
-    if (type === "all") return "Все видео курса";
-    if (type === "percent") return `Доступ: ${t?.limitValue ?? t?.limit_value ?? 0}%`;
-    return `Доступ к ${t?.videoLimit ?? t?.video_limit ?? t?.limitValue ?? t?.limit_value ?? 0} видео`;
-  }
-
-  function generateWhatsAppTariffLink(tariffId) {
-    // тут тарифы опущены (у тебя они из контекста были), оставил как было бы
-    const msg = `Хочу купить курс: ${getCourseTitle(course)}
+  function generateWhatsAppTariffLink(t) {
+    const msg = `Хочу купить доступ к курсу: ${getCourseTitle(course)}
 Преподаватель: ${teacherName}
-Тариф: ${tariffId}
-Цена: ? сом`;
+Тариф: ${t?.title || t?.id}
+Цена: ${t?.price || ""} сом`;
 
     return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
   }
@@ -1074,14 +1189,46 @@ ${list}`;
             </Card>
           </div>
 
+          {/* RIGHT */}
           <div className="space-y-6">
             <Card className="border-0 shadow-sm lg:sticky lg:top-24">
               <CardHeader>
-                <CardTitle>Покупка</CardTitle>
+                <CardTitle>Тарифы</CardTitle>
               </CardHeader>
 
               <CardContent className="space-y-6">
                 <div ref={tariffsRef} />
+
+                {tariffsLoading ? (
+                  <div className="py-2 text-sm text-gray-600">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-700" />
+                    <div className="mt-2">Загрузка тарифов...</div>
+                  </div>
+                ) : tariffsError ? (
+                  <div className="text-sm text-red-600">{tariffsError}</div>
+                ) : tariffs.length === 0 ? (
+                  <div className="text-sm text-gray-600">Тарифы пока не добавлены.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {tariffs.map((t) => (
+                      <div key={t.id} className="rounded-2xl border border-gray-200 p-4 bg-white">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-semibold text-gray-900 truncate">{t.title || `Тариф #${t.id}`}</div>
+                            <div className="text-sm text-gray-600 mt-1">{moneySom(t.price)}</div>
+                          </div>
+
+                          <a href={generateWhatsAppTariffLink(t)} target="_blank" rel="noopener noreferrer" className="shrink-0">
+                            <Button variant="outline" className="gap-2">
+                              <ShoppingCart className="w-4 h-4" />
+                              Купить
+                            </Button>
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 <div className="rounded-2xl border border-gray-200 p-4 bg-white">
                   <div className="flex items-center justify-between">
@@ -1136,19 +1283,13 @@ ${list}`;
           <div className="relative z-10 w-full max-w-3xl bg-white rounded-2xl overflow-hidden shadow-xl border border-white/10">
             <div className="flex items-center justify-between px-4 py-3 border-b">
               <div className="font-semibold truncate pr-3">{activeLesson?.title || "Просмотр урока"}</div>
-              <button
-                type="button"
-                onClick={closePreview}
-                className="p-2 rounded-xl hover:bg-gray-100 transition"
-                aria-label="Закрыть"
-              >
+              <button type="button" onClick={closePreview} className="p-2 rounded-xl hover:bg-gray-100 transition" aria-label="Закрыть">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="relative bg-gray-950">
               <div ref={ytWrapRef} className="relative w-full" style={{ paddingBottom: "56.25%" }}>
-                {/* ✅ если YT API не загрузился — iframe fallback */}
                 {fallbackIframeId ? (
                   <iframe
                     title="lesson-video"
@@ -1192,7 +1333,6 @@ ${list}`;
                   </div>
                 )}
 
-                {/* Контролы доступны только для YT API режима */}
                 {!videoError && !isPaywallOpen && !isVideoEnded && !fallbackIframeId && (
                   <div
                     className={[
@@ -1279,7 +1419,7 @@ ${list}`;
                             setTimeout(() => scrollToTariffs(), 100);
                           }}
                         >
-                          Купить
+                          Тарифы
                         </Button>
                       </div>
                     </div>

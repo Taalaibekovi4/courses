@@ -73,7 +73,7 @@ function getHwTitle(hw) {
 }
 
 function getHwStatus(hw) {
-  return String(hw?.status ?? "").toLowerCase(); // accepted | rework | declined
+  return String(hw?.status ?? "").toLowerCase(); // accepted | rework | declined | (any other)
 }
 
 function getHwTeacherComment(hw) {
@@ -88,6 +88,7 @@ function homeworkStatusBadge(status) {
   if (status === "accepted") return <Badge className="bg-green-600 text-white border-transparent">Принято</Badge>;
   if (status === "rework") return <Badge variant="secondary">На доработку</Badge>;
   if (status === "declined") return <Badge variant="destructive">Отклонено</Badge>;
+  if (status) return <Badge variant="outline">Отправлено</Badge>;
   return <Badge variant="outline">—</Badge>;
 }
 
@@ -140,6 +141,30 @@ function DashNav({ activeTab }) {
 
 function getCourseId(course) {
   return String(course?.id ?? course?.course_id ?? "").trim();
+}
+
+function getTeacherName(course) {
+  return (
+    course?.teacher_name ||
+    course?.instructor_name ||
+    course?.access?.teacher_name ||
+    course?.access?.instructor_name ||
+    course?.teacher?.full_name ||
+    course?.teacher?.name ||
+    course?.instructor?.full_name ||
+    course?.instructor?.name ||
+    ""
+  );
+}
+
+function getCategoryName(course) {
+  return (
+    course?.category_name ||
+    course?.category?.name ||
+    course?.access?.category_name ||
+    course?.access?.category?.name ||
+    "Категория"
+  );
 }
 
 export function StudentDashboard() {
@@ -208,7 +233,7 @@ export function StudentDashboard() {
         (hw) => getHwCourseId(hw) === cid && getHwStatus(hw) === "accepted"
       ).length;
 
-      const denom = Math.max(totalLessons, acceptedCount, 1);
+      const denom = Math.max(totalLessons || 0, 1);
       const pct = Math.min(100, Math.round((acceptedCount / denom) * 100));
 
       return { totalLessons, acceptedCount, pct };
@@ -297,13 +322,10 @@ export function StudentDashboard() {
 
                 const key = `course_${cid}_${idx}`;
                 const title = course?.title || course?.name || course?.access?.course_title || "Курс";
-                const categoryName = course?.category_name || "Категория";
+                const categoryName = getCategoryName(course);
 
-                const teacherName =
-                  course?.teacher_name ||
-                  course?.instructor_name ||
-                  course?.access?.instructor_name ||
-                  "Преподаватель";
+                const teacher = getTeacherName(course);
+                const teacherLine = teacher ? `Преподаватель: ${teacher}` : "Преподаватель: —";
 
                 const { totalLessons, acceptedCount, pct } = courseProgress(course);
 
@@ -313,7 +335,7 @@ export function StudentDashboard() {
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0">
                           <CardTitle className="truncate">{title}</CardTitle>
-                          <CardDescription className="truncate">{teacherName}</CardDescription>
+                          <CardDescription className="truncate">{teacherLine}</CardDescription>
                         </div>
                         <Badge className="self-start sm:self-auto shrink-0">{categoryName}</Badge>
                       </div>
@@ -326,7 +348,7 @@ export function StudentDashboard() {
                             <span>Прогресс</span>
                             <span className="whitespace-nowrap">
                               Принято ДЗ: {acceptedCount}
-                              {totalLessons ? ` / ${totalLessons}` : ""}
+                              {totalLessons ? ` / ${totalLessons}` : ""}{" "}
                             </span>
                           </div>
                           <Progress value={pct} />
@@ -338,7 +360,8 @@ export function StudentDashboard() {
 
                         {course?.access?.remaining_videos != null ? (
                           <div className="text-sm text-gray-600">
-                            Осталось открытий видео: <span className="font-medium">{course.access.remaining_videos}</span>
+                            Осталось открытий видео:{" "}
+                            <span className="font-medium">{course.access.remaining_videos}</span>
                           </div>
                         ) : null}
                       </div>
@@ -449,7 +472,7 @@ export function StudentDashboard() {
               <p className="text-sm text-red-600 mt-3">{data.error.activateToken}</p>
             ) : (
               <p className="text-sm text-gray-600 mt-4">
-                После активации курсы появятся в разделе “Мои курсы”. Доступ к видео выдаётся через “Открыть урок”.
+                После активации курсы появятся в разделе “Мои курсы”.
               </p>
             )}
           </CardContent>

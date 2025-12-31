@@ -24,16 +24,38 @@ const norm = (s) => String(s ?? "").trim();
 const lower = (s) => norm(s).toLowerCase();
 
 function getTeacherName(course) {
+  // ✅ максимально “терпимый” маппинг под разные бэки
   return (
-    course?.teacherName ||
+    course?.instructor_name ||
+    course?.instructorName ||
     course?.teacher_name ||
+    course?.teacherName ||
     course?.teacherUsername ||
     course?.teacher_username ||
+    course?.instructor?.full_name ||
+    course?.instructor?.username ||
+    course?.instructor?.email ||
+    course?.teacher?.full_name ||
     course?.teacher?.username ||
     course?.teacher?.name ||
     course?.teacher?.email ||
     "—"
   );
+}
+
+function getCourseCategoryName(course, categories) {
+  if (course?.categoryName) return course.categoryName;
+  if (course?.category_name) return course.category_name;
+  if (course?.category?.name) return course.category.name;
+
+  const catId =
+    course?.categoryId ?? course?.category_id ?? course?.category ?? null;
+
+  const cat = (Array.isArray(categories) ? categories : []).find(
+    (c) => String(c?.id ?? c?.pk ?? "") === String(catId ?? "")
+  );
+
+  return cat?.name || cat?.title || "Категория";
 }
 
 export function CoursesListPage() {
@@ -53,19 +75,13 @@ export function CoursesListPage() {
     return courses.filter((c) => {
       const t = lower(c?.title);
       const d = lower(c?.description);
-      const cat = lower(c?.categoryName || c?.category_name);
+      const cat = lower(
+        c?.categoryName || c?.category_name || c?.category?.name
+      );
       const teacher = lower(getTeacherName(c));
       return t.includes(q) || d.includes(q) || cat.includes(q) || teacher.includes(q);
     });
   }, [courses, searchQuery]);
-
-  const getCategoryName = (course) => {
-    if (course?.categoryName) return course.categoryName;
-    if (course?.category_name) return course.category_name;
-
-    const cat = categories.find((c) => String(c.id) === String(course?.categoryId));
-    return cat?.name || "Категория";
-  };
 
   return (
     <div className="min-h-screen bg-gray-50 overflow-x-hidden">
@@ -125,13 +141,44 @@ export function CoursesListPage() {
               {filtered.map((course) => {
                 const lessonsCount = Number(course?.lessonsCount ?? course?.lessons_count ?? 0);
 
-                // ✅ ВАЖНО: даём ключ, который реально совпадёт с деталкой.
-                // если есть slug — используем slug, иначе id
+                // ✅ ключ для роутинга
                 const courseKey = course?.slug ? String(course.slug) : String(course.id);
                 const link = `/course/${courseKey}`;
 
+                // ✅ preview — чтобы на CoursePage было ФИО преподавателя даже если /courses/{id}/ его не отдаёт
+                const coursePreview = {
+                  id: course?.id ?? null,
+                  slug: course?.slug ?? null,
+                  title: course?.title ?? "",
+                  description: course?.description ?? "",
+                  lessonsCount,
+                  categoryName: getCourseCategoryName(course, categories),
+                  teacherName: getTeacherName(course),
+                  teacherId:
+                    course?.instructor_id ??
+                    course?.instructorId ??
+                    course?.teacher_id ??
+                    course?.teacherId ??
+                    course?.instructor ??
+                    course?.teacher ??
+                    course?.teacher?.id ??
+                    course?.instructor?.id ??
+                    null,
+                  categoryId:
+                    course?.category_id ??
+                    course?.categoryId ??
+                    course?.category ??
+                    course?.category?.id ??
+                    null,
+                };
+
                 return (
-                  <Link key={String(course.id)} to={link} className="block">
+                  <Link
+                    key={String(course?.id ?? courseKey)}
+                    to={link}
+                    state={{ coursePreview }}
+                    className="block"
+                  >
                     <Card className="group relative overflow-hidden border-0 shadow-sm hover:shadow-xl transition-all duration-300 max-w-[360px] mx-auto">
                       <div
                         className="absolute inset-0 bg-cover bg-center"
@@ -148,7 +195,7 @@ export function CoursesListPage() {
                               className="w-fit bg-white/15 text-white border-white/20"
                               variant="secondary"
                             >
-                              {getCategoryName(course)}
+                              {getCourseCategoryName(course, categories)}
                             </Badge>
 
                             <div className="flex items-center gap-2 text-white/85 text-xs">
@@ -158,7 +205,7 @@ export function CoursesListPage() {
                           </div>
 
                           <CardTitle className="mt-4 text-2xl leading-snug drop-shadow-sm">
-                            {course.title}
+                            {course?.title || "Курс"}
                           </CardTitle>
 
                           <div className="mt-3 text-sm text-white/85">
@@ -177,7 +224,7 @@ export function CoursesListPage() {
                             ].join(" ")}
                           >
                             <CardDescription className="text-white/85 mb-3 line-clamp-2">
-                              {course.description || "—"}
+                              {course?.description || "—"}
                             </CardDescription>
 
                             <div className="flex items-center justify-between text-sm text-white/85 mb-4">

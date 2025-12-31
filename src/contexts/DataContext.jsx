@@ -47,7 +47,7 @@ export function clearAccessToken() {
 
 const api = axios.create({
   baseURL: API_BASE,
-  timeout: 25000,
+  timeout: 1125000,
 });
 
 api.interceptors.request.use((config) => {
@@ -163,9 +163,6 @@ function pickBestVideoUrl(obj) {
 
 /**
  * ✅ НОРМАЛИЗАЦИЯ me/courses/
- * Бэк может вернуть:
- * A) обычный список курсов [{id,title,...}]
- * B) список доступов [{ access:{course, course_title...}, lessons:[...] }]
  */
 function extractCourseIdFromAny(x) {
   const candidates = [
@@ -184,7 +181,6 @@ function extractCourseIdFromAny(x) {
     x?.course_detail?.course_id,
     x?.course_detail?.courseId,
 
-    // если вдруг уроки содержат course (иногда так бывает)
     x?.lessons?.[0]?.course,
     x?.lessons?.[0]?.course_id,
     x?.lessons?.[0]?.courseId,
@@ -213,11 +209,32 @@ function extractCourseTitleFromAny(x) {
   return "Курс";
 }
 
+function pickTeacherFromAny(x) {
+  return (
+    x?.teacher_name ||
+    x?.instructor_name ||
+    x?.access?.teacher_name ||
+    x?.access?.instructor_name ||
+    x?.teacher?.full_name ||
+    x?.instructor?.full_name ||
+    ""
+  );
+}
+
+function pickCategoryFromAny(x) {
+  return (
+    x?.category_name ||
+    x?.category?.name ||
+    x?.access?.category_name ||
+    x?.access?.category?.name ||
+    ""
+  );
+}
+
 function normalizeMyCourses(raw) {
   const list = asList(raw);
   const arr = Array.isArray(list) ? list : [];
 
-  // case B: access + lessons
   const looksLikeAccessShape =
     arr.length > 0 &&
     typeof arr[0] === "object" &&
@@ -225,7 +242,6 @@ function normalizeMyCourses(raw) {
     ("access" in arr[0] || "lessons" in arr[0]);
 
   if (!looksLikeAccessShape) {
-    // case A: обычные курсы
     return arr
       .filter((c) => {
         const cid = extractCourseIdFromAny(c);
@@ -237,7 +253,6 @@ function normalizeMyCourses(raw) {
       });
   }
 
-  // case B: нормализуем в курсы
   return arr
     .map((item) => {
       const cid = extractCourseIdFromAny(item);
@@ -245,12 +260,17 @@ function normalizeMyCourses(raw) {
       const lessons = Array.isArray(item?.lessons) ? item.lessons : [];
 
       return {
-        id: cid, // важно для UI
+        id: cid,
         course_id: cid,
         title,
         name: title,
         access: item?.access || null,
         lessons,
+
+        // ✅ чтобы на карточке было ФИО/категория
+        teacher_name: pickTeacherFromAny(item) || undefined,
+        instructor_name: pickTeacherFromAny(item) || undefined,
+        category_name: pickCategoryFromAny(item) || undefined,
       };
     })
     .filter((c) => !!String(c?.id || "").trim());
@@ -279,7 +299,7 @@ export function DataProvider({ children }) {
     openedLessonsRef.current = openedLessons || {};
   }, [openedLessons]);
 
-  // public lessons fallback (если нужно)
+  // public lessons fallback
   const [lessonsByCourse, setLessonsByCourse] = useState({});
 
   const [loading, setLoading] = useState({
@@ -420,7 +440,6 @@ export function DataProvider({ children }) {
         const payload = { token: norm(token) };
         const res = await api.post("access/activate-token/", payload);
 
-        // ✅ сразу после активации подтягиваем список курсов/уроков
         await loadMyCourses();
         await loadMyHomeworks();
 
@@ -437,7 +456,7 @@ export function DataProvider({ children }) {
   );
 
   /**
-   * Публичные уроки (fallback). Обычно не нужны, если me/courses/ отдаёт lessons.
+   * Публичные уроки (fallback)
    */
   const loadLessonsPublicByCourse = useCallback(async (courseId) => {
     const cid = norm(courseId);
@@ -506,7 +525,7 @@ export function DataProvider({ children }) {
 
       setOpenedLessons((prev) => ({ ...(prev || {}), [key]: lessonObj }));
 
-      // ✅ чтобы is_opened обновился на UI без ожидания
+      // ✅ чтобы is_opened обновился на UI
       setMyCourses((prev) =>
         (Array.isArray(prev) ? prev : []).map((c) => {
           const lessons = Array.isArray(c?.lessons) ? c.lessons : [];
@@ -529,34 +548,77 @@ export function DataProvider({ children }) {
   }, []);
 
   /**
-   * Отправить ДЗ: POST homeworks/
+   * ✅ Домашка: один раз создаём, потом только обновляем (PATCH).
+   * - accepted: запрещено
+   * - rework/declined: разрешено "отправить снова" (по факту PATCH)
+   * - другие статусы: разрешено редактирование (PATCH), но не "новая отправка"
    */
   const submitHomework = useCallback(
-    async ({ lessonId, content }) => {
+    async ({ lessonId, content, homeworkId = null }) => {
       setLoading((p) => ({ ...p, submitHomework: true }));
+
       try {
         const idNum = Number(lessonId);
         if (!Number.isFinite(idNum)) return { ok: false, error: "Неверный lessonId" };
 
-        const payload = {
-          lesson: idNum,
-          content: norm(content),
-        };
+        const text = norm(content);
+        if (!text) return { ok: false, error: "Пустой текст" };
 
-        const res = await api.post("homeworks/", payload);
+        // если homeworkId не дали — попробуем найти существующий по lessonId
+        const existing =
+          homeworkId != null
+            ? { id: homeworkId }
+            : (Array.isArray(myHomeworks) ? myHomeworks : []).find((h) => {
+                const lid =
+                  String(h?.lesson ?? h?.lesson_id ?? h?.lessonId ?? h?.lesson?.id ?? h?.lesson?.pk ?? "");
+                return String(lid) === String(idNum);
+              }) || null;
+
+        const existingStatus = String(existing?.status ?? "").toLowerCase();
+        if (existing && existingStatus === "accepted") {
+          return { ok: false, error: "ДЗ уже принято — редактирование закрыто" };
+        }
+
+        // CREATE
+        if (!existing) {
+          const payload = { lesson: idNum, content: text };
+          const attempt = await tryMany([
+            () => api.post("homeworks/", payload),
+            () => api.post("homeworks", payload),
+          ]);
+          if (!attempt.ok) throw attempt.error;
+
+          await loadMyHomeworks();
+          return { ok: true, data: attempt.res.data };
+        }
+
+        // UPDATE (PATCH)
+        const hwId = String(existing?.id ?? existing?.pk ?? homeworkId ?? "").trim();
+        if (!hwId) return { ok: false, error: "Не найден homeworkId" };
+
+        const payload = { content: text };
+
+        const attempt = await tryMany([
+          () => api.patch(`homeworks/${encodeURIComponent(hwId)}/`, payload),
+          () => api.patch(`homeworks/${encodeURIComponent(hwId)}`, payload),
+          () => api.put(`homeworks/${encodeURIComponent(hwId)}/`, { lesson: idNum, content: text }),
+          () => api.put(`homeworks/${encodeURIComponent(hwId)}`, { lesson: idNum, content: text }),
+        ]);
+        if (!attempt.ok) throw attempt.error;
+
         await loadMyHomeworks();
-        return { ok: true, data: res.data };
+        return { ok: true, data: attempt.res.data };
       } catch (e) {
         return { ok: false, error: getErrMsg(e) };
       } finally {
         setLoading((p) => ({ ...p, submitHomework: false }));
       }
     },
-    [loadMyHomeworks]
+    [loadMyHomeworks, myHomeworks]
   );
 
   /* =========================
-   * TEACHER ACTIONS (минимум)
+   * TEACHER ACTIONS
    * ========================= */
   const reviewHomework = useCallback(async (homeworkId, status, comment) => {
     try {

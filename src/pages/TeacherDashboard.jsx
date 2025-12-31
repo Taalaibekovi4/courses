@@ -434,8 +434,6 @@ function canPlayVideo(url) {
 
 function isTeacherCanReview(status) {
   const s = normLow(status);
-  // submitted — точно проверяем
-  // rework — если бэк НЕ сбрасывает обратно в submitted после повторной отправки
   return s === "submitted" || !s || s === "rework";
 }
 
@@ -514,6 +512,9 @@ export function TeacherDashboard() {
     homeworkDescription: "",
     homeworkFile: null,
   });
+
+  // ✅ большой оверлей загрузки
+  const [isAddingLesson, setIsAddingLesson] = useState(false);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -605,7 +606,6 @@ export function TeacherDashboard() {
     return homeworksSafe.filter((hw) => archivedIds.has(String(hw.id)));
   }, [homeworksSafe, archivedIds]);
 
-  // pending = только submitted (если статус rework — учитель уже ответил, ждём студента)
   const pendingCount = teacherHomeworksActive.filter(
     (hw) => normLow(hw.status) === "submitted" || !normLow(hw.status)
   ).length;
@@ -983,6 +983,8 @@ export function TeacherDashboard() {
   }
 
   async function handleAddLesson() {
+    if (isAddingLesson) return;
+
     const cid = norm(addForm.courseId);
     if (!cid) {
       toast.error("Выберите курс");
@@ -1000,9 +1002,12 @@ export function TeacherDashboard() {
       return;
     }
 
+    setIsAddingLesson(true);
     try {
       const payload = buildLessonPayload(addForm, { courseId: cid });
-      const res = await addLesson(payload);
+
+      // ✅ ВАЖНО: пытаемся убрать axios timeout (если addLesson прокидывает config во внутрь)
+      const res = await addLesson(payload, { timeout: 0 });
 
       if (res?.ok === false) {
         toast.error(res?.error || "Не удалось добавить урок");
@@ -1028,6 +1033,8 @@ export function TeacherDashboard() {
     } catch (e) {
       console.error(e);
       toast.error("Ошибка добавления урока");
+    } finally {
+      setIsAddingLesson(false);
     }
   }
 
@@ -1206,9 +1213,7 @@ export function TeacherDashboard() {
                                     </div>
                                     <div className="text-xs text-gray-500 mt-1">
                                       Отправлено:{" "}
-                                      {hw.createdAt
-                                        ? new Date(hw.createdAt).toLocaleDateString()
-                                        : "—"}
+                                      {hw.createdAt ? new Date(hw.createdAt).toLocaleDateString() : "—"}
                                     </div>
                                   </div>
                                   <StatusBadge status={hw.status} />
@@ -1254,10 +1259,7 @@ export function TeacherDashboard() {
                                         На доработку
                                       </Button>
 
-                                      <Button
-                                        onClick={() => handleReview(hw.id, "declined")}
-                                        variant="destructive"
-                                      >
+                                      <Button onClick={() => handleReview(hw.id, "declined")} variant="destructive">
                                         <XCircle className="w-4 h-4 mr-2" />
                                         Отклонить
                                       </Button>
@@ -1265,7 +1267,8 @@ export function TeacherDashboard() {
 
                                     {normLow(hw.status) === "rework" ? (
                                       <div className="text-xs text-gray-600">
-                                        Если студент исправит и отправит снова — статус должен вернуться в <b>На проверке</b>.
+                                        Если студент исправит и отправит снова — статус должен вернуться в{" "}
+                                        <b>На проверке</b>.
                                       </div>
                                     ) : null}
                                   </div>
@@ -1321,9 +1324,7 @@ export function TeacherDashboard() {
                           className="flex-1 text-left"
                           type="button"
                         >
-                          <CardTitle className="text-xl">
-                            {normalizeCourseTitle(course) || "Курс"}
-                          </CardTitle>
+                          <CardTitle className="text-xl">{normalizeCourseTitle(course) || "Курс"}</CardTitle>
                           <p className="text-sm text-gray-600 mt-2">
                             {(normalizeCategoryName(course) || "Без категории") +
                               " • " +
@@ -1331,19 +1332,12 @@ export function TeacherDashboard() {
                               " уроков"}
                           </p>
                           {course?.description ? (
-                            <p className="text-sm text-gray-700 mt-2 line-clamp-2">
-                              {course.description}
-                            </p>
+                            <p className="text-sm text-gray-700 mt-2 line-clamp-2">{course.description}</p>
                           ) : null}
                         </button>
 
                         <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openEditCourse(course)}
-                          >
+                          <Button type="button" variant="outline" size="sm" onClick={() => openEditCourse(course)}>
                             <FolderPen className="w-4 h-4 mr-2" />
                             Курс
                           </Button>
@@ -1371,11 +1365,7 @@ export function TeacherDashboard() {
                             const showUrl = isEditing
                               ? norm(editForm.videoInput)
                               : norm(
-                                  l?.youtubeVideoId ??
-                                    l?.youtube_video_id ??
-                                    l?.videoUrl ??
-                                    l?.video_url ??
-                                    ""
+                                  l?.youtubeVideoId ?? l?.youtube_video_id ?? l?.videoUrl ?? l?.video_url ?? ""
                                 );
 
                             const orderLabel = l?.order ? l.order : idx + 1;
@@ -1386,11 +1376,7 @@ export function TeacherDashboard() {
                                   <div className="font-semibold">
                                     {orderLabel}. {normalizeLessonTitle(l) || "Урок"}
                                   </div>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => openEditLesson(l)}
-                                  >
+                                  <Button variant="outline" size="sm" onClick={() => openEditLesson(l)}>
                                     <Pencil className="w-4 h-4 mr-2" />
                                     Редактировать
                                   </Button>
@@ -1415,14 +1401,11 @@ export function TeacherDashboard() {
 
                                 {showUrl ? (
                                   <div className="mt-3 text-xs text-gray-600 break-all">
-                                    Видео (URL/ID):{" "}
-                                    <span className="text-gray-900">{showUrl}</span>
+                                    Видео (URL/ID): <span className="text-gray-900">{showUrl}</span>
                                   </div>
                                 ) : null}
 
-                                {l?.description ? (
-                                  <p className="text-sm text-gray-700 mt-3">{l.description}</p>
-                                ) : null}
+                                {l?.description ? <p className="text-sm text-gray-700 mt-3">{l.description}</p> : null}
 
                                 {isEditing && (
                                   <div className="mt-4 space-y-3">
@@ -1430,9 +1413,7 @@ export function TeacherDashboard() {
                                       <label className="text-sm">Название</label>
                                       <Input
                                         value={editForm.title}
-                                        onChange={(e) =>
-                                          setEditForm((p) => ({ ...p, title: e.target.value }))
-                                        }
+                                        onChange={(e) => setEditForm((p) => ({ ...p, title: e.target.value }))}
                                       />
                                     </div>
 
@@ -1441,9 +1422,7 @@ export function TeacherDashboard() {
                                       <Textarea
                                         rows={3}
                                         value={editForm.description}
-                                        onChange={(e) =>
-                                          setEditForm((p) => ({ ...p, description: e.target.value }))
-                                        }
+                                        onChange={(e) => setEditForm((p) => ({ ...p, description: e.target.value }))}
                                       />
                                     </div>
 
@@ -1451,9 +1430,7 @@ export function TeacherDashboard() {
                                       <label className="text-sm">Ссылка или ID</label>
                                       <Input
                                         value={editForm.videoInput}
-                                        onChange={(e) =>
-                                          setEditForm((p) => ({ ...p, videoInput: e.target.value }))
-                                        }
+                                        onChange={(e) => setEditForm((p) => ({ ...p, videoInput: e.target.value }))}
                                         placeholder="https://youtu.be/... или dQw4w9WgXcQ"
                                       />
                                     </div>
@@ -1484,10 +1461,7 @@ export function TeacherDashboard() {
                                         rows={2}
                                         value={editForm.homeworkDescription}
                                         onChange={(e) =>
-                                          setEditForm((p) => ({
-                                            ...p,
-                                            homeworkDescription: e.target.value,
-                                          }))
+                                          setEditForm((p) => ({ ...p, homeworkDescription: e.target.value }))
                                         }
                                       />
                                     </div>
@@ -1538,10 +1512,17 @@ export function TeacherDashboard() {
                           options={teacherCoursesOptions}
                           placeholder="Выберите курс"
                           searchPlaceholder="Найти курс..."
+                          disabled={isAddingLesson}
                         />
                       </div>
 
-                      <Button type="button" variant="outline" onClick={openAddCourse} className="shrink-0">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={openAddCourse}
+                        className="shrink-0"
+                        disabled={isAddingLesson}
+                      >
                         <Plus className="w-4 h-4 mr-2" />
                         Новый курс
                       </Button>
@@ -1554,6 +1535,7 @@ export function TeacherDashboard() {
                       value={addForm.videoInput}
                       onChange={(e) => setAddForm((p) => ({ ...p, videoInput: e.target.value }))}
                       placeholder="https://youtu.be/... или dQw4w9WgXcQ"
+                      disabled={isAddingLesson}
                     />
 
                     <div className="space-y-2">
@@ -1563,6 +1545,7 @@ export function TeacherDashboard() {
                           type="file"
                           accept="video/*"
                           className="hidden"
+                          disabled={isAddingLesson}
                           onChange={(e) => {
                             const f = e.target.files?.[0] || null;
                             if (f) onPickAddVideo(f);
@@ -1597,6 +1580,7 @@ export function TeacherDashboard() {
                     value={addForm.title}
                     onChange={(e) => setAddForm((p) => ({ ...p, title: e.target.value }))}
                     placeholder="Например: Компоненты и props"
+                    disabled={isAddingLesson}
                   />
                 </div>
 
@@ -1607,6 +1591,7 @@ export function TeacherDashboard() {
                     value={addForm.description}
                     onChange={(e) => setAddForm((p) => ({ ...p, description: e.target.value }))}
                     placeholder="Коротко о чем урок"
+                    disabled={isAddingLesson}
                   />
                 </div>
 
@@ -1617,6 +1602,7 @@ export function TeacherDashboard() {
                     value={addForm.homeworkDescription}
                     onChange={(e) => setAddForm((p) => ({ ...p, homeworkDescription: e.target.value }))}
                     placeholder="Что студент должен сделать"
+                    disabled={isAddingLesson}
                   />
                 </div>
 
@@ -1627,7 +1613,9 @@ export function TeacherDashboard() {
                   onClear={() => setAddForm((p) => ({ ...p, homeworkFile: null }))}
                 />
 
-                <Button onClick={handleAddLesson}>Добавить</Button>
+                <Button onClick={handleAddLesson} disabled={isAddingLesson}>
+                  Добавить
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>
@@ -1675,15 +1663,11 @@ export function TeacherDashboard() {
                                   <div>
                                     <div className="font-semibold">
                                       {hw.courseTitle || "Курс"} •{" "}
-                                      {normalizeLessonTitle(lesson) ||
-                                        hw.lessonTitle ||
-                                        `Урок ${hw.lessonId}`}
+                                      {normalizeLessonTitle(lesson) || hw.lessonTitle || `Урок ${hw.lessonId}`}
                                     </div>
                                     <div className="text-xs text-gray-500 mt-1">
                                       Проверено:{" "}
-                                      {hw.reviewedAt
-                                        ? new Date(hw.reviewedAt).toLocaleDateString()
-                                        : "—"}
+                                      {hw.reviewedAt ? new Date(hw.reviewedAt).toLocaleDateString() : "—"}
                                     </div>
                                   </div>
                                   <StatusBadge status={hw.status} />
@@ -1797,6 +1781,25 @@ export function TeacherDashboard() {
             </div>
           </div>
         </Modal>
+
+        {/* ✅ ОВЕРЛЕЙ: большой, по центру */}
+        {isAddingLesson ? (
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center px-4"
+            role="status"
+            aria-live="polite"
+            aria-label="Видео загружается"
+          >
+            <div className="absolute inset-0 bg-black/70" />
+            <div className="relative z-10 w-full max-w-md rounded-2xl bg-white shadow-xl border p-6">
+              <div className="flex flex-col items-center text-center gap-4">
+                <div className="animate-spin rounded-full h-16 w-16 border-4 border-gray-200 border-t-blue-600" />
+                <div className="text-xl font-semibold">Видео загружается</div>
+                <div className="text-sm text-gray-600">Пожалуйста, не выходите</div>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -7,12 +7,12 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "https://vostok-massage.webtm.ru",
+        target: "https://vostok-massage.kg",
         changeOrigin: true,
         secure: true,
       },
       "/media": {
-        target: "https://vostok-massage.webtm.ru",
+        target: "https://vostok-massage.kg",
         changeOrigin: true,
         secure: true,
       },
