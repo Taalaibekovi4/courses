@@ -1,3 +1,4 @@
+// src/pages/CategoryPage.jsx
 import React, { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { BookOpen, Users, Filter } from "lucide-react";
@@ -16,39 +17,80 @@ import { Button } from "../components/ui/button.jsx";
 const FALLBACK_CAT_IMG =
   "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1200&q=80";
 
-const FALLBACK_TEACHER_IMG =
-  "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1200&q=80";
-
 const FALLBACK_COURSE_BG =
   "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1400&q=80";
 
 const fullBleed = "w-screen left-1/2 right-1/2 -ml-[50vw] -mr-[50vw]";
 const str = (v) => String(v ?? "").trim();
 
+/** base для медиа (если бэк отдаёт /media/...) */
+const API_BASE_RAW =
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) || "";
+
+const API_ORIGIN = str(API_BASE_RAW).replace(/\/api\/?$/i, "").replace(/\/$/, "");
+
+function toAbsUrl(url) {
+  const u = str(url);
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u)) return u;
+  if (u.startsWith("//")) return `https:${u}`;
+  if (u.startsWith("/")) {
+    if (API_ORIGIN) return `${API_ORIGIN}${u}`;
+    return u;
+  }
+  if (API_ORIGIN) return `${API_ORIGIN}/${u}`;
+  return u;
+}
+
 function getCourseCategoryId(course) {
-  return course?.categoryId ?? course?.category ?? null;
+  // Swagger: category (integer)
+  return course?.categoryId ?? course?.category ?? course?.category_id ?? null;
 }
 
 function getCourseTeacher(course) {
   // Swagger: instructor (id) + instructor_name
   // Старое: teacherId + teacherName
   const id = course?.teacherId ?? course?.instructor ?? null;
-  const name = course?.teacherName ?? course?.instructor_name ?? course?.instructorName ?? "—";
+  const name =
+    course?.teacherName ??
+    course?.instructor_name ??
+    course?.instructorName ??
+    "—";
   return { id: str(id), name: str(name) || "—" };
 }
 
 function getLessonsCount(course) {
-  const v =
-    course?.lessonsCount ??
-    course?.lessons_count ??
-    course?.lessonsCount ??
-    0;
+  const v = course?.lessonsCount ?? course?.lessons_count ?? 0;
   return Number(v) || 0;
+}
+
+function getCategoryImg(category) {
+  // Swagger: photo
+  const img =
+    category?.photo ||
+    category?.imageUrl ||
+    category?.coverUrl ||
+    category?.image ||
+    "";
+  const abs = toAbsUrl(img);
+  return abs || FALLBACK_CAT_IMG;
+}
+
+function getCourseImg(course) {
+  // Swagger: photo
+  const img =
+    course?.photo ||
+    course?.imageUrl ||
+    course?.coverUrl ||
+    course?.image ||
+    "";
+  const abs = toAbsUrl(img);
+  return abs || FALLBACK_COURSE_BG;
 }
 
 export function CategoryPage() {
   const { id } = useParams();
-  const categoryId = str(id); // slug теперь = id
+  const categoryId = str(id);
 
   const data = useData?.() || {};
   const categories = Array.isArray(data.categories) ? data.categories : [];
@@ -57,31 +99,48 @@ export function CategoryPage() {
   const loading = Boolean(data?.loading?.public);
   const error = str(data?.error?.public);
 
-const category = useMemo(
-  () => categories.find((c) => String(c?.id) === String(id)) || null,
-  [categories, id]
-);
+  const category = useMemo(
+    () => categories.find((c) => String(c?.id) === String(id)) || null,
+    [categories, id]
+  );
 
   const categoryCourses = useMemo(() => {
     if (!categoryId) return [];
     return courses.filter((c) => str(getCourseCategoryId(c)) === categoryId);
   }, [courses, categoryId]);
 
+  /**
+   * ВАЖНО:
+   * Карточка "преподавателя" теперь показывает фото курса (course.photo),
+   * а не фото преподавателя.
+   * Берём первое попавшееся фото курса этого преподавателя в этой категории.
+   */
   const teachers = useMemo(() => {
     const map = new Map();
+
     for (const c of categoryCourses) {
       const t = getCourseTeacher(c);
       if (!t.id && !t.name) continue;
-      const key = t.id || t.name; // если id нет, спасаемся именем
+
+      const key = t.id || t.name;
+      const coverFromCourse = getCourseImg(c); // <-- курс.photo
+
       if (!map.has(key)) {
         map.set(key, {
           id: t.id || key,
           name: t.name || "—",
-          image: FALLBACK_TEACHER_IMG,
+          image: coverFromCourse || FALLBACK_COURSE_BG,
           bio: "",
         });
+      } else {
+        // если вдруг первый курс был без photo, а этот с photo — обновим
+        const cur = map.get(key);
+        if (cur?.image === FALLBACK_COURSE_BG && coverFromCourse && coverFromCourse !== FALLBACK_COURSE_BG) {
+          map.set(key, { ...cur, image: coverFromCourse });
+        }
       }
     }
+
     return Array.from(map.values());
   }, [categoryCourses]);
 
@@ -96,7 +155,7 @@ const category = useMemo(
     });
   }, [categoryCourses, selectedTeacherKey]);
 
-  const catBg = category?.imageUrl || category?.coverUrl || category?.image || FALLBACK_CAT_IMG;
+  const catBg = getCategoryImg(category);
 
   if (!loading && !error && !category) {
     return (
@@ -219,9 +278,7 @@ const category = useMemo(
                         key={tKey}
                         type="button"
                         onClick={() =>
-                          setSelectedTeacherKey((prev) =>
-                            str(prev) === tKey ? "all" : tKey
-                          )
+                          setSelectedTeacherKey((prev) => (str(prev) === tKey ? "all" : tKey))
                         }
                         className="text-left"
                       >
@@ -231,11 +288,19 @@ const category = useMemo(
                             isActive ? "ring-2 ring-blue-600" : "",
                           ].join(" ")}
                         >
-                          <div
-                            className="absolute inset-0 bg-cover bg-center"
-                            style={{ backgroundImage: `url(${t.image || FALLBACK_TEACHER_IMG})` }}
-                            aria-hidden="true"
-                          />
+                          {/* ВМЕСТО ФОТО ПРЕПОДА — ФОТО КУРСА */}
+                          <div className="absolute inset-0">
+                            <img
+                              src={t.image || FALLBACK_COURSE_BG}
+                              alt={t.name || "Преподаватель"}
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                              onError={(e) => {
+                                e.currentTarget.src = FALLBACK_COURSE_BG;
+                              }}
+                            />
+                          </div>
+
                           <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/20" />
 
                           <div className="relative h-[220px] flex flex-col justify-between">
@@ -309,15 +374,24 @@ const category = useMemo(
                   {filteredCourses.map((course) => {
                     const t = getCourseTeacher(course);
                     const lessonsCount = getLessonsCount(course);
+                    const courseImg = getCourseImg(course);
 
                     return (
-                      <Link key={course.id} to={`/course/${course.id}`} className="block">
+                      <Link key={course?.id} to={`/course/${course?.id}`} className="block">
                         <Card className="group relative overflow-hidden border-0 shadow-sm hover:shadow-xl transition-all duration-300 max-w-[360px] mx-auto">
-                          <div
-                            className="absolute inset-0 bg-cover bg-center"
-                            style={{ backgroundImage: `url(${FALLBACK_COURSE_BG})` }}
-                            aria-hidden="true"
-                          />
+                          {/* ФОТО КУРСА */}
+                          <div className="absolute inset-0">
+                            <img
+                              src={courseImg}
+                              alt={course?.title || "Курс"}
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                              onError={(e) => {
+                                e.currentTarget.src = FALLBACK_COURSE_BG;
+                              }}
+                            />
+                          </div>
+
                           <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/20" />
 
                           <div className="relative h-[320px] flex flex-col justify-between">
@@ -327,7 +401,7 @@ const category = useMemo(
                                   className="w-fit bg-white/15 text-white border-white/20"
                                   variant="secondary"
                                 >
-                                  {category?.name || "Категория"}
+                                  {course?.category_name || category?.name || "Категория"}
                                 </Badge>
 
                                 <div className="flex items-center gap-2 text-white/85 text-xs">
@@ -337,7 +411,7 @@ const category = useMemo(
                               </div>
 
                               <CardTitle className="mt-4 text-2xl leading-snug drop-shadow-sm">
-                                {course.title}
+                                {course?.title}
                               </CardTitle>
 
                               <div className="mt-3 text-sm text-white/85">
@@ -349,7 +423,7 @@ const category = useMemo(
                             <CardContent className="p-5 pt-0">
                               <div className="rounded-xl border border-white/15 bg-black/25 backdrop-blur-md p-4">
                                 <CardDescription className="text-white/85 mb-3 line-clamp-2">
-                                  {course.description}
+                                  {course?.description}
                                 </CardDescription>
 
                                 <div className="flex items-center justify-between text-sm text-white/85 mb-4">

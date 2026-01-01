@@ -308,7 +308,7 @@ export function StudentDashboard() {
                     </Button>
 
                     <Link to="/courses">
-                      <Button variant="outline">Посмотреть каталог</Button>
+                      <Button variant="outline">Посмотреть курсы</Button>
                     </Link>
                   </div>
                 </div>

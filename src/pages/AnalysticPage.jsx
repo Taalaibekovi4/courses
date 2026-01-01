@@ -26,6 +26,24 @@ import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card.
 import { Button } from "../components/ui/button.jsx";
 import { Badge } from "../components/ui/badge.jsx";
 
+/**
+ * ✅ Используем новые эндпоинты:
+ * GET /analytics/courses/
+ * GET /analytics/courses/{course_id}/
+ * GET /analytics/lessons/top/
+ * GET /analytics/overview/
+ *
+ * baseURL берём из VITE_API_URL (например: http://127.0.0.1:8000/api/)
+ * иначе fallback: "/api"
+ */
+
+const rawBase =
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) ||
+  process.env.REACT_APP_API_URL ||
+  "";
+
+const API_BASE = String(rawBase || "").trim().replace(/\/+$/, ""); // без хвостового "/"
+
 const norm = (s) => String(s ?? "").trim();
 const normLow = (s) => norm(s).toLowerCase();
 
@@ -81,7 +99,6 @@ function formatDate(d) {
   return s || "—";
 }
 
-/** достаёт число по нескольким путям (поддерживает вложенность через ".") */
 function pickNumberAny(obj, paths) {
   const root = safeObj(obj);
   for (const p of paths) {
@@ -99,7 +116,6 @@ function pickNumberAny(obj, paths) {
     }
     if (!ok) continue;
     const n = toNum(cur);
-    // учитываем даже 0 как валидное
     if (n !== 0 || cur === 0 || cur === "0") return n;
   }
   return 0;
@@ -242,11 +258,7 @@ function SearchableSelectSingle({
           </div>
 
           <div className="max-h-64 overflow-auto">
-            <button
-              type="button"
-              onClick={() => pick("")}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
-            >
+            <button type="button" onClick={() => pick("")} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50">
               {placeholder}
             </button>
 
@@ -260,10 +272,7 @@ function SearchableSelectSingle({
                   key={v}
                   type="button"
                   onClick={() => pick(v)}
-                  className={[
-                    "w-full text-left px-3 py-2 text-sm hover:bg-gray-50",
-                    isActive ? "bg-blue-50" : "",
-                  ].join(" ")}
+                  className={["w-full text-left px-3 py-2 text-sm hover:bg-gray-50", isActive ? "bg-blue-50" : ""].join(" ")}
                 >
                   {label}
                 </button>
@@ -331,7 +340,7 @@ function KPI({ icon: Icon, label, value }) {
 function StatCard({ label, value, hint }) {
   return (
     <div className="rounded-2xl border bg-white p-4">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <div className="text-xs text-gray-500">{label}</div>
         {hint ? (
           <span className="inline-flex items-center gap-1 text-xs text-gray-400">
@@ -345,6 +354,175 @@ function StatCard({ label, value, hint }) {
   );
 }
 
+/* ============ Simple SVG charts (без зависимостей) ============ */
+function clamp(n, a, b) {
+  return Math.max(a, Math.min(b, n));
+}
+
+function MiniBarLineChart({
+  bars = [],
+  line = [],
+  height = 190,
+  padding = 16,
+  showAxis = true,
+  bar2Color = "#FDE68A",
+  bar3Color = "#67E8F9",
+  lineColor = "#60A5FA",
+}) {
+  const safeBars = Array.isArray(bars) ? bars : [];
+  const safeLine = Array.isArray(line) ? line : [];
+  const n = Math.max(safeBars.length, safeLine.length, 1);
+
+  const W = 520;
+  const H = height;
+
+  const maxBar = Math.max(1, ...safeBars.map((x) => toNum(x)));
+  const maxLine = Math.max(1, ...safeLine.map((x) => toNum(x)));
+
+  const innerW = W - padding * 2;
+  const innerH = H - padding * 2;
+
+  const stepX = innerW / n;
+  const barW = Math.max(10, stepX * 0.62);
+
+  const yBar = (v) => padding + innerH - (toNum(v) / maxBar) * innerH;
+  const yLine = (v) => padding + innerH - (toNum(v) / maxLine) * innerH;
+
+  const stepAfterPath = () => {
+    if (!safeLine.length) return "";
+    let d = "";
+    for (let i = 0; i < n; i++) {
+      const v = safeLine[i] ?? safeLine[safeLine.length - 1] ?? 0;
+      const x0 = padding + i * stepX + stepX / 2;
+      const y0 = yLine(v);
+
+      if (i === 0) {
+        d += `M ${x0} ${y0}`;
+      } else {
+        const prevV = safeLine[i - 1] ?? safeLine[safeLine.length - 1] ?? 0;
+        const prevY = yLine(prevV);
+        d += ` L ${x0} ${prevY} L ${x0} ${y0}`;
+      }
+    }
+    return d;
+  };
+
+  const axisLines = showAxis ? (
+    <>
+      <line x1={padding} y1={padding} x2={padding} y2={H - padding} stroke="#E5E7EB" strokeWidth="1" />
+      <line x1={padding} y1={H - padding} x2={W - padding} y2={H - padding} stroke="#E5E7EB" strokeWidth="1" />
+      {[0.25, 0.5, 0.75].map((k) => {
+        const y = padding + innerH - innerH * k;
+        return <line key={k} x1={padding} y1={y} x2={W - padding} y2={y} stroke="#F3F4F6" strokeWidth="1" />;
+      })}
+    </>
+  ) : null;
+
+  const palette = [bar2Color, bar3Color, "#FDA4AF", "#FDE68A", "#67E8F9", "#FCA5A5", "#A7F3D0"];
+
+  return (
+    <div className="w-full overflow-hidden">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+        {axisLines}
+
+        {Array.from({ length: n }).map((_, i) => {
+          const v = safeBars[i] ?? 0;
+          const x = padding + i * stepX + (stepX - barW) / 2;
+          const y = yBar(v);
+          const h = H - padding - y;
+          const c = palette[i % palette.length];
+          return <rect key={`b-${i}`} x={x} y={y} width={barW} height={Math.max(0, h)} rx="6" fill={c} opacity="0.95" />;
+        })}
+
+        <path d={stepAfterPath()} fill="none" stroke={lineColor} strokeWidth="3" strokeLinejoin="round" />
+
+        {Array.from({ length: n }).map((_, i) => {
+          const v = safeLine[i] ?? safeLine[safeLine.length - 1] ?? 0;
+          const cx = padding + i * stepX + stepX / 2;
+          const cy = yLine(v);
+          return <circle key={`p-${i}`} cx={cx} cy={cy} r="4" fill="#ffffff" stroke={lineColor} strokeWidth="2" />;
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function arcPath(cx, cy, rOuter, rInner, a0, a1) {
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  const x0 = cx + rOuter * Math.cos(a0);
+  const y0 = cy + rOuter * Math.sin(a0);
+  const x1 = cx + rOuter * Math.cos(a1);
+  const y1 = cy + rOuter * Math.sin(a1);
+
+  const x2 = cx + rInner * Math.cos(a1);
+  const y2 = cy + rInner * Math.sin(a1);
+  const x3 = cx + rInner * Math.cos(a0);
+  const y3 = cy + rInner * Math.sin(a0);
+
+  return [
+    `M ${x0} ${y0}`,
+    `A ${rOuter} ${rOuter} 0 ${large} 1 ${x1} ${y1}`,
+    `L ${x2} ${y2}`,
+    `A ${rInner} ${rInner} 0 ${large} 0 ${x3} ${y3}`,
+    "Z",
+  ].join(" ");
+}
+
+function DonutChart({
+  segments = [],
+  size = 230,
+  inner = 72,
+  gap = 0.012,
+  colors = ["#FDA4AF", "#FDE68A", "#67E8F9", "#60A5FA", "#A7F3D0", "#FCA5A5"],
+}) {
+  const list = Array.isArray(segments) ? segments : [];
+  const total = Math.max(0.0001, list.reduce((s, x) => s + Math.max(0, toNum(x.value)), 0));
+
+  const cx = size / 2;
+  const cy = size / 2;
+  const rOuter = size / 2 - 8;
+  const rInner = clamp(inner, 30, rOuter - 20);
+
+  let a = -Math.PI / 2;
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      {list.map((seg, i) => {
+        const v = Math.max(0, toNum(seg.value));
+        const frac = v / total;
+        const sweep = Math.max(0, frac * Math.PI * 2);
+        const a0 = a + gap;
+        const a1 = a + sweep - gap;
+        a += sweep;
+
+        if (a1 <= a0) return null;
+
+        const d = arcPath(cx, cy, rOuter, rInner, a0, a1);
+        const fill = colors[i % colors.length];
+
+        return <path key={seg.key || i} d={d} fill={fill} />;
+      })}
+    </svg>
+  );
+}
+
+function DonutEmpty({ size = 240, inner = 78 }) {
+  const cx = size / 2;
+  const cy = size / 2;
+  const rOuter = size / 2 - 8;
+  const rInner = clamp(inner, 30, rOuter - 20);
+  const a0 = -Math.PI / 2;
+  const a1 = a0 + Math.PI * 2;
+  const d = arcPath(cx, cy, rOuter, rInner, a0, a1);
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <path d={d} fill="#F3F4F6" />
+    </svg>
+  );
+}
+
+/* ============ Tables ============ */
 function DailyTable({ rows }) {
   const list = Array.isArray(rows) ? rows : [];
   if (!list.length) return <div className="text-sm text-gray-600">Нет дневной статистики.</div>;
@@ -390,11 +568,11 @@ function pickBestMetric(row) {
   const r = safeObj(row);
 
   const candidates = [
+    "opens_count",
     "opens",
     "opened",
     "opened_count",
     "open_count",
-    "opens_count",
     "total_opens",
     "views",
     "view_count",
@@ -415,6 +593,7 @@ function pickBestMetric(row) {
   const ignore = new Set([
     "id",
     "pk",
+    "lesson_id",
     "course",
     "course_id",
     "courseId",
@@ -423,8 +602,6 @@ function pickBestMetric(row) {
     "title",
     "name",
     "lesson",
-    "lesson_id",
-    "lessonId",
     "lesson_title",
     "lessonTitle",
     "date",
@@ -441,7 +618,7 @@ function pickBestMetric(row) {
   return { value: 0, key: "" };
 }
 
-/* ============ Modal (адаптив + не вылезает + скролл без полосы) ============ */
+/* ============ Modal ============ */
 function CourseDailyModal({ open, onClose, detail }) {
   useEffect(() => {
     if (!open) return;
@@ -481,8 +658,8 @@ function CourseDailyModal({ open, onClose, detail }) {
 
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true">
-      <div className="absolute inset-0 bg-black/70" onClick={onClose} />
-
+      {/* ✅ НЕ закрываем по клику вне модалки */}
+      <div className="absolute inset-0 bg-black/70" />
       <div className="absolute inset-0 flex items-center justify-center p-2 sm:p-4">
         <div
           className={[
@@ -509,7 +686,6 @@ function CourseDailyModal({ open, onClose, detail }) {
             </button>
           </div>
 
-          {/* скролл есть, полоса скрыта */}
           <ScrollHidden className="h-[calc(100%-56px)]">
             <div className="p-3 sm:p-4 bg-gray-50">
               <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -557,19 +733,21 @@ export function AnalysticPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  // ✅ доступ только админам
   useEffect(() => {
     const role = normLow(user?.role);
-    const allowed = new Set(["admin", "Analystic", "superadmin", "owner"]);
+    const allowed = new Set(["admin", "admin1", "superadmin", "owner"]);
     if (!role || !allowed.has(role)) {
       toast.error("Доступ запрещён (только для админов)");
       navigate("/", { replace: true });
     }
   }, [user, navigate]);
 
-  // ✅ API: timeout отключён
   const api = useMemo(() => {
-    const inst = axios.create({ baseURL: "/api", timeout: 0 });
+    const inst = axios.create({
+      baseURL: API_BASE || "/api",
+      timeout: 20000,
+    });
+
     inst.interceptors.request.use((config) => {
       try {
         const t =
@@ -582,6 +760,7 @@ export function AnalysticPage() {
       } catch (_) {}
       return config;
     });
+
     return inst;
   }, []);
 
@@ -620,11 +799,16 @@ export function AnalysticPage() {
     return fallback;
   };
 
+  /* ✅ теперь без старых fallback путей — только новые /analytics/... */
+  const apiGet = useCallback(async (path) => {
+    return await api.get(path);
+  }, [api]);
+
   const loadOverview = useCallback(async () => {
     setL("overview", true);
     setE("overview", "");
     try {
-      const { data } = await api.get("/analystic/overview/", { timeout: 0 });
+      const { data } = await apiGet("/analytics/overview/");
       setOverview(data);
     } catch (e) {
       setOverview(null);
@@ -632,13 +816,13 @@ export function AnalysticPage() {
     } finally {
       setL("overview", false);
     }
-  }, [api]);
+  }, [apiGet]);
 
   const loadCourses = useCallback(async () => {
     setL("courses", true);
     setE("courses", "");
     try {
-      const { data } = await api.get("/analystic/courses/", { timeout: 0 });
+      const { data } = await apiGet("/analytics/courses/");
       setCourses(extractArray(data));
     } catch (e) {
       setCourses([]);
@@ -646,13 +830,13 @@ export function AnalysticPage() {
     } finally {
       setL("courses", false);
     }
-  }, [api]);
+  }, [apiGet]);
 
   const loadTopLessons = useCallback(async () => {
     setL("topLessons", true);
     setE("topLessons", "");
     try {
-      const { data } = await api.get("/analystic/lessons/top/", { timeout: 0 });
+      const { data } = await apiGet("/analytics/lessons/top/");
       setTopLessons(extractArray(data));
     } catch (e) {
       setTopLessons([]);
@@ -660,16 +844,16 @@ export function AnalysticPage() {
     } finally {
       setL("topLessons", false);
     }
-  }, [api]);
+  }, [apiGet]);
 
   const loadCourseDetail = useCallback(
     async (courseId) => {
       const cid = norm(courseId);
       if (!cid) return null;
-      const { data } = await api.get(`/analystic/courses/${cid}/`, { timeout: 0 });
+      const { data } = await apiGet(`/analytics/courses/${cid}/`);
       return normalizeCourseDetail(data);
     },
-    [api]
+    [apiGet]
   );
 
   const loadAllCourseDetails = useCallback(
@@ -694,6 +878,7 @@ export function AnalysticPage() {
           next[id] = { __error: extractErr(e, `Ошибка аналитики курса ID=${id}`) };
         }
       }
+
       setCourseDetails(next);
       setL("allCourseDetails", false);
     },
@@ -735,7 +920,6 @@ export function AnalysticPage() {
     return d;
   }, [modalCourseId, courseDetails]);
 
-  // ✅ KPI сверху (сумма по курсам)
   const topKpi = useMemo(() => {
     const map = safeObj(courseDetails);
     const details = Object.values(map).filter((d) => d && !d.__error);
@@ -752,43 +936,14 @@ export function AnalysticPage() {
     };
   }, [courseDetails, courses]);
 
-  // ✅ OVERVIEW: убрали 2 карточки и поставили 2 рабочих (покупки+выручка)
   const overviewCards = useMemo(() => {
     const o = safeObj(overview);
 
-    const purchases = pickNumberAny(o, [
-      "total_purchases",
-      "purchases",
-      "overview.total_purchases",
-      "data.total_purchases",
-    ]);
+    const purchases = pickNumberAny(o, ["total_purchases", "purchases"]);
+    const revenue = pickNumberAny(o, ["total_revenue", "revenue"]);
+    const uniqueStudents = pickNumberAny(o, ["unique_students", "total_students", "students"]);
+    const accepted = pickNumberAny(o, ["accepted_homeworks", "homeworks_accepted", "accepted"]);
 
-    const revenue = pickNumberAny(o, [
-      "total_revenue",
-      "revenue",
-      "overview.total_revenue",
-      "data.total_revenue",
-    ]);
-
-    const uniqueStudents = pickNumberAny(o, [
-      "unique_students",
-      "total_students",
-      "students",
-      "overview.unique_students",
-      "data.unique_students",
-    ]);
-
-    const accepted = pickNumberAny(o, [
-      "accepted_homeworks",
-      "homeworks_accepted",
-      "total_accepted_homeworks",
-      "accepted",
-      "overview.accepted_homeworks",
-      "homeworks.accepted",
-      "homework.accepted",
-    ]);
-
-    // fallback, если overview пустой/кривой
     const purchasesVal = purchases || topKpi.totalPurchases;
     const revenueVal = revenue || topKpi.totalRevenue;
 
@@ -807,8 +962,8 @@ export function AnalysticPage() {
       const { value: metricValue } = pickBestMetric(row);
 
       return {
-        id: row.id ?? row.pk ?? idx + 1,
-        title: pickTitle(row),
+        id: row.lesson_id ?? row.id ?? row.pk ?? idx + 1,
+        title: row.lesson_title ?? pickTitle(row),
         courseTitle: row.course_title ?? row.courseTitle ?? row.course_name ?? "—",
         metric: metricValue,
       };
@@ -830,9 +985,79 @@ export function AnalysticPage() {
     setModalCourseId("");
   }, []);
 
+  /* ============ Dashboard data ============ */
+  const dashboardDaily = useMemo(() => {
+    const map = safeObj(courseDetails);
+    const details = Object.values(map).filter((d) => d && !d.__error);
+
+    const byDate = new Map();
+    for (const d of details) {
+      const daily = Array.isArray(d.daily) ? d.daily : [];
+      for (const r of daily) {
+        const date = String(r?.date || "");
+        if (!date) continue;
+        const cur = byDate.get(date) || { date, purchases: 0, revenue: 0 };
+        cur.purchases += Number(r.purchases) || 0;
+        cur.revenue += toNum(r.revenue);
+        byDate.set(date, cur);
+      }
+    }
+
+    const list = Array.from(byDate.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    return list.slice(-8);
+  }, [courseDetails]);
+
+  const dashboardChartData = useMemo(() => {
+    if (!dashboardDaily.length) {
+      return {
+        bars: [12, 28, 44, 18, 26, 41, 15],
+        line: [1, 1, 0, 1, 0, 0, 1],
+        caption: "Нет дневной статистики",
+      };
+    }
+    return {
+      bars: dashboardDaily.map((x) => x.revenue),
+      line: dashboardDaily.map((x) => x.purchases),
+      caption: `Последние дни: ${dashboardDaily.length}`,
+    };
+  }, [dashboardDaily]);
+
+  /* ✅ Донат: только реальные данные courses */
+  const donut = useMemo(() => {
+    const arr = Array.isArray(courses) ? courses : [];
+    const rows = arr
+      .map((c) => ({
+        key: String(c?.course_id ?? c?.id ?? pickId(c) ?? ""),
+        label: String(c?.course_title ?? c?.title ?? c?.name ?? pickTitle(c) ?? "Курс"),
+        value: toNum(c?.total_revenue ?? c?.totalRevenue ?? c?.revenue ?? 0),
+      }))
+      .filter((x) => x.key && x.label);
+
+    const total = rows.reduce((s, x) => s + Math.max(0, toNum(x.value)), 0);
+
+    if (total <= 0) {
+      return { segments: [], total: 0 };
+    }
+
+    const sorted = rows
+      .map((x) => ({ ...x, value: Math.max(0, toNum(x.value)) }))
+      .filter((x) => x.value > 0)
+      .sort((a, b) => b.value - a.value);
+
+    const top = sorted.slice(0, 4);
+    const restSum = sorted.slice(4).reduce((s, x) => s + x.value, 0);
+
+    const segments = [...top];
+    if (restSum > 0) segments.push({ key: "other", label: "Остальные", value: restSum });
+
+    const topSum = segments.reduce((s, x) => s + x.value, 0);
+    return { segments, total: topSum };
+  }, [courses]);
+
+  const donutColors = ["#FDA4AF", "#FDE68A", "#67E8F9", "#60A5FA", "#A7F3D0", "#FCA5A5"];
+
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* px-3 чтобы влезало даже на 320 */}
       <div className="container mx-auto px-3 sm:px-4 py-6 sm:py-8">
         {/* Header */}
         <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -844,7 +1069,6 @@ export function AnalysticPage() {
             </div>
           </div>
 
-          {/* кнопки не ломают 320: на мобиле = в колонку */}
           <div className="w-full sm:w-auto flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
             <Button
               variant="outline"
@@ -858,6 +1082,71 @@ export function AnalysticPage() {
               <RefreshCw className={`w-4 h-4 mr-2 ${anyLoading ? "animate-spin" : ""}`} />
               Обновить
             </Button>
+          </div>
+        </div>
+
+        {/* ✅ Dashboard */}
+        <div className="mt-6 grid lg:grid-cols-2 gap-4 lg:gap-6">
+          {/* Chart */}
+          <div className="rounded-2xl border bg-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold text-gray-900">Динамика выручки и покупок</div>
+              <div className="text-xs text-gray-500">{dashboardChartData.caption}</div>
+            </div>
+
+            <div className="mt-3">
+              <MiniBarLineChart bars={dashboardChartData.bars} line={dashboardChartData.line} height={200} showAxis />
+            </div>
+
+            <div className="mt-2 text-xs text-gray-500 flex items-center gap-3 flex-wrap">
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#67E8F9" }} />
+                Выручка (бар)
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#60A5FA" }} />
+                Покупки (линия)
+              </span>
+            </div>
+          </div>
+
+          {/* ✅ Donut */}
+          <div className="rounded-2xl border bg-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold text-gray-900">Доля выручки по курсам (топ)</div>
+              <span className="text-xs text-gray-500">Всего: {moneySom(donut.total)}</span>
+            </div>
+
+            <div className="mt-3 flex items-center justify-center">
+              <div className="relative">
+                {donut.segments.length ? <DonutChart segments={donut.segments} size={240} inner={78} /> : <DonutEmpty size={240} inner={78} />}
+
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">{donut.segments.length ? "Выручка" : "Нет данных"}</div>
+                    <div className="text-lg font-semibold text-gray-900">{donut.segments.length ? moneySom(donut.total) : "0.00 сом"}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {donut.segments.length ? (
+              <div className="mt-3 grid gap-2">
+                {donut.segments.map((s, idx) => {
+                  const c = donutColors[idx % donutColors.length];
+                  const pct = donut.total > 0 ? Math.round((toNum(s.value) / donut.total) * 100) : 0;
+                  return (
+                    <div key={s.key} className="flex items-center gap-2 text-sm">
+                      <span className="w-3 h-3 rounded-full" style={{ background: c }} />
+                      <span className="text-gray-800 truncate flex-1">{s.label}</span>
+                      <span className="text-gray-500">{pct}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="mt-3 text-sm text-gray-600 text-center">Пока нет выручки по курсам — диаграмма появится после первых покупок.</div>
+            )}
           </div>
         </div>
 
@@ -993,9 +1282,7 @@ export function AnalysticPage() {
                       searchPlaceholder="Найти курс..."
                       disabled={loading.courses}
                     />
-                    <div className="text-xs text-gray-500 mt-2">
-                      Здесь видно подробную статистику по одному курсу.
-                    </div>
+                    <div className="text-xs text-gray-500 mt-2">Здесь видно подробную статистику по одному курсу.</div>
                   </div>
 
                   {selectedCourseId && selectedDetail ? (
@@ -1011,20 +1298,14 @@ export function AnalysticPage() {
                       </div>
 
                       <div className="mt-4">
-                        <Button
-                          variant="outline"
-                          className="w-full gap-2"
-                          onClick={() => openCourseModal(selectedDetail.courseId)}
-                        >
+                        <Button variant="outline" className="w-full gap-2" onClick={() => openCourseModal(selectedDetail.courseId)}>
                           <CalendarDays className="w-4 h-4" />
                           Дневная статистика
                         </Button>
                       </div>
                     </div>
                   ) : selectedCourseId ? (
-                    <div className="rounded-2xl border bg-white p-4 text-sm text-gray-600">
-                      Нет данных по курсу (или ещё не загрузилось).
-                    </div>
+                    <div className="rounded-2xl border bg-white p-4 text-sm text-gray-600">Нет данных по курсу (или ещё не загрузилось).</div>
                   ) : null}
                 </div>
               </div>

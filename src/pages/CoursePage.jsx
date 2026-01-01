@@ -8,13 +8,42 @@ import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card.
 import { Badge } from "../components/ui/badge.jsx";
 import { PlayCircle, CheckCircle, X, BookOpen, GraduationCap, ShoppingCart } from "lucide-react";
 
-const WHATSAPP_NUMBER = "996221000953";
+// ⚠️ PREVIEW_SECONDS оставляем как было
 const PREVIEW_SECONDS = 5;
 
 const FALLBACK_COVER =
   "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1600&q=80";
 
 const fullBleed = "w-screen left-1/2 right-1/2 -ml-[50vw] -mr-[50vw]";
+
+const str = (v) => String(v ?? "").trim();
+
+function getApiBase() {
+  const raw =
+    (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) ||
+    process.env.REACT_APP_API_URL ||
+    "/api";
+  return str(raw).replace(/\/+$/, "");
+}
+
+/** base для медиа (если бэк отдаёт /media/...) */
+const API_BASE_RAW =
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) || "";
+
+const API_ORIGIN = str(API_BASE_RAW).replace(/\/api\/?$/i, "").replace(/\/$/, "");
+
+function toAbsUrl(url) {
+  const u = str(url);
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u)) return u;
+  if (u.startsWith("//")) return `https:${u}`;
+  if (u.startsWith("/")) {
+    if (API_ORIGIN) return `${API_ORIGIN}${u}`;
+    return u;
+  }
+  if (API_ORIGIN) return `${API_ORIGIN}/${u}`;
+  return u;
+}
 
 function pickCourseIdFromParams(params) {
   return String(params?.id ?? params?.slug ?? params?.courseId ?? params?.pk ?? "").trim();
@@ -61,6 +90,11 @@ function getTeacherNameFromAny(obj) {
 }
 function getCategoryNameFromAny(obj) {
   return obj?.categoryName || obj?.category_name || obj?.category?.name || obj?.category_title || "";
+}
+
+function getCoursePhotoFromAny(obj) {
+  const raw = obj?.photo || obj?.imageUrl || obj?.coverUrl || obj?.image || obj?._raw?.photo || "";
+  return toAbsUrl(raw);
 }
 
 function normalizeLessonCourseId(l) {
@@ -131,7 +165,7 @@ function normalizeLessonsList(arr) {
   }));
 }
 
-/** ✅ теперь умеет shorts и live */
+/** ✅ shorts + live */
 function getYouTubeId(input) {
   const s = String(input || "").trim();
   if (!s) return "";
@@ -214,9 +248,10 @@ function ensureYouTubeScriptWithTimeout(ms = 3500) {
 function normalizeTariff(t) {
   return {
     id: String(t?.id ?? ""),
-    title: String(t?.title ?? ""),
-    price: String(t?.price ?? ""),
+    title: String(t?.title ?? t?.name ?? ""),
+    price: String(t?.price ?? t?.amount ?? ""),
     courseId: String(t?.course ?? t?.course_id ?? t?.courseId ?? ""),
+    description: String(t?.description ?? t?.desc ?? ""),
     _raw: t,
   };
 }
@@ -227,6 +262,14 @@ function moneySom(v) {
   return `${s} сом`;
 }
 
+function extractSettings(payload) {
+  if (!payload) return null;
+  if (Array.isArray(payload)) return payload[0] || null;
+  if (Array.isArray(payload?.results)) return payload.results[0] || null;
+  if (Array.isArray(payload?.data)) return payload.data[0] || null;
+  return payload;
+}
+
 export function CoursePage() {
   const params = useParams();
   const courseId = pickCourseIdFromParams(params);
@@ -234,10 +277,37 @@ export function CoursePage() {
   const location = useLocation();
   const preview = location?.state?.coursePreview || null;
 
-  // ✅ если у тебя нет Vite proxy — поставь VITE_API_URL="http://127.0.0.1:8000/api"
-  const API_BASE = (import.meta?.env?.VITE_API_URL || "/api").trim();
-
+  const API_BASE = getApiBase();
   const publicApi = useMemo(() => axios.create({ baseURL: API_BASE, timeout: 20000 }), [API_BASE]);
+
+  // ✅ SETTINGS (whatsapp_number)
+  const [settings, setSettings] = useState(null);
+
+  const whatsappNumber = useMemo(() => {
+    const n = str(settings?.whatsapp_number);
+    return n || "996221000953";
+  }, [settings]);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const r = await publicApi.get("/settings/");
+        const s = extractSettings(r.data);
+        if (!alive) return;
+        setSettings(s || null);
+      } catch (e) {
+        console.error(e);
+        if (!alive) return;
+        setSettings(null);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [publicApi]);
 
   const [course, setCourse] = useState(() => {
     const pid = getCourseId(preview);
@@ -256,7 +326,6 @@ export function CoursePage() {
   const [tariffsLoading, setTariffsLoading] = useState(false);
   const [tariffsError, setTariffsError] = useState("");
 
-  const [selectedLessonIds, setSelectedLessonIds] = useState([]);
   const [activeLessonId, setActiveLessonId] = useState(null);
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
@@ -270,13 +339,20 @@ export function CoursePage() {
 
   const tariffsRef = useRef(null);
 
-  const ytWrapRef = useRef(null);
   const ytMountRef = useRef(null);
   const ytPlayerRef = useRef(null);
   const ytTimerRef = useRef(null);
 
   // ✅ guard от двойного useEffect в React 18 StrictMode (DEV)
   const didLoadLessonsRef = useRef(false);
+
+  // ✅ если меняется courseId — сбрасываем guard и данные
+  useEffect(() => {
+    didLoadLessonsRef.current = false;
+    setLessons([]);
+    setLessonsError("");
+    setActiveLessonId(null);
+  }, [courseId]);
 
   const courseLessonsCount = useMemo(() => {
     const c = course?._raw || course || {};
@@ -292,6 +368,11 @@ export function CoursePage() {
     () => getTeacherNameFromAny(course) || course?.teacherName || "—",
     [course]
   );
+
+  const coverUrl = useMemo(() => {
+    const img = getCoursePhotoFromAny(course) || getCoursePhotoFromAny(preview) || "";
+    return img || FALLBACK_COVER;
+  }, [course, preview]);
 
   const loadCourse = useCallback(async () => {
     const cid = String(courseId || "").trim();
@@ -311,8 +392,12 @@ export function CoursePage() {
         title: getCourseTitle(fetched) || preview?.title || "Курс",
         description: getCourseDesc(fetched) || preview?.description || "",
         lessonsCount: fetched?.lessonsCount ?? fetched?.lessons_count ?? preview?.lessonsCount ?? 0,
-        teacherName: getTeacherNameFromAny(fetched) !== "—" ? getTeacherNameFromAny(fetched) : preview?.teacherName || "—",
+        teacherName:
+          getTeacherNameFromAny(fetched) !== "—"
+            ? getTeacherNameFromAny(fetched)
+            : preview?.teacherName || "—",
         categoryName: getCategoryNameFromAny(fetched) || preview?.categoryName || "",
+        photo: fetched?.photo ?? preview?.photo ?? null,
         _raw: fetched,
       });
     } finally {
@@ -363,7 +448,6 @@ export function CoursePage() {
     setLessonsError("");
 
     try {
-      // ✅ 1) embedded lessons в /courses/{id}/ (самый правильный вариант)
       const embedded = extractLessonsFromCourse(course);
       if (embedded.length) {
         let filtered = embedded.filter((l) => String(l.courseId || "") === String(cid));
@@ -373,7 +457,6 @@ export function CoursePage() {
         return;
       }
 
-      // ✅ 2) единственный fallback: /lessons/
       let res = await tryGet(publicApi, "/lessons/", { params: { course_id: cid } });
       let arr = res.ok ? extractArrayAny(res.data) : [];
 
@@ -393,14 +476,15 @@ export function CoursePage() {
 
       setLessons([]);
       if (courseLessonsCount > 0) {
-        setLessonsError("Уроки в курсе есть, но сервер не отдаёт публичный список уроков. Добавь lessons в /courses/{id}/ или сделай публичный эндпоинт /lessons/?course_id=.");
+        setLessonsError(
+          "Уроки в курсе есть, но сервер не отдаёт публичный список уроков. Добавь lessons в /courses/{id}/ или сделай публичный эндпоинт /lessons/?course_id=."
+        );
       }
     } finally {
       setLessonsLoading(false);
     }
   }, [course, publicApi, courseLessonsCount]);
 
-  // ✅ anti-spam: один раз при заходе на страницу
   useEffect(() => {
     if (didLoadLessonsRef.current) return;
     if (!course) return;
@@ -419,19 +503,6 @@ export function CoursePage() {
     if (!activeLessonId) return first;
     return lessonsById.get(activeLessonId) || first;
   }, [activeLessonId, lessons, lessonsById]);
-
-  const selectedLessons = useMemo(() => {
-    return (selectedLessonIds || []).map((id) => lessonsById.get(id)).filter(Boolean);
-  }, [selectedLessonIds, lessonsById]);
-
-  const toggleSelectLesson = useCallback((lessonId) => {
-    setSelectedLessonIds((prev) => {
-      const set = new Set(prev);
-      if (set.has(lessonId)) set.delete(lessonId);
-      else set.add(lessonId);
-      return Array.from(set);
-    });
-  }, []);
 
   const stopYouTubeTimer = useCallback(() => {
     if (ytTimerRef.current) {
@@ -637,23 +708,7 @@ export function CoursePage() {
 Тариф: ${t?.title || t?.id}
 Цена: ${t?.price || ""} сом`;
 
-    return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
-  }
-
-  function generateWhatsAppSelectedLessonsLink() {
-    const count = selectedLessons.length;
-    if (!count) return "#";
-
-    const list = selectedLessons.map((l, i) => `${i + 1}) ${l.title}`).join("\n");
-
-    const msg = `Хочу доступ к урокам курса: ${getCourseTitle(course)}
-Преподаватель: ${teacherName}
-Нужно уроков: ${count}
-
-Список уроков:
-${list}`;
-
-    return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
+    return `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(msg)}`;
   }
 
   if (!course && !courseLoading) {
@@ -675,16 +730,23 @@ ${list}`;
     );
   }
 
-  const coverUrl = FALLBACK_COVER;
+  const lessonsCountShown = courseLessonsCount || lessons.length || 0;
 
   return (
     <div className="min-h-screen bg-gray-50 overflow-x-hidden">
       <section className={`relative text-white overflow-hidden ${fullBleed}`}>
-        <div
-          className="absolute inset-0 bg-cover bg-center"
-          style={{ backgroundImage: `url(${coverUrl})` }}
-          aria-hidden="true"
-        />
+        <div className="absolute inset-0">
+          <img
+            src={coverUrl}
+            alt={getCourseTitle(course)}
+            className="h-full w-full object-cover"
+            loading="lazy"
+            onError={(e) => {
+              e.currentTarget.src = FALLBACK_COVER;
+            }}
+          />
+        </div>
+
         <div className="absolute inset-0 bg-gradient-to-r from-blue-700/85 to-purple-700/75" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/20 to-transparent" />
 
@@ -697,7 +759,7 @@ ${list}`;
 
               <span className="inline-flex items-center gap-2 text-sm bg-white/10 border border-white/15 rounded-md px-3 py-2">
                 <BookOpen className="w-4 h-4" />
-                {courseLessonsCount || lessons.length || 0} уроков
+                {lessonsCountShown} уроков
               </span>
 
               <span className="inline-flex items-center gap-2 text-sm bg-white/10 border border-white/15 rounded-md px-3 py-2">
@@ -705,7 +767,6 @@ ${list}`;
                 {teacherName}
               </span>
             </div>
-
             <h1 className="text-4xl sm:text-5xl mt-4 leading-tight">{getCourseTitle(course)}</h1>
             <p className="text-lg sm:text-xl text-white/90 mt-3 max-w-3xl">{getCourseDesc(course)}</p>
           </div>
@@ -739,8 +800,8 @@ ${list}`;
                       {lessonsError
                         ? "Не удалось показать список уроков."
                         : courseLessonsCount > 0
-                          ? "Уроки в курсе есть, но список не пришёл."
-                          : "Пока нет уроков."}
+                        ? "Уроки в курсе есть, но список не пришёл."
+                        : "Пока нет уроков."}
                     </div>
 
                     {lessonsError ? (
@@ -755,64 +816,42 @@ ${list}`;
 
                 {!lessonsLoading && lessons.length > 0 && (
                   <div className="space-y-3">
-                    {lessons.map((lesson, index) => {
-                      const isSelected = selectedLessonIds.includes(lesson.id);
+                    {lessons.map((lesson, index) => (
+                      <button
+                        key={lesson.id}
+                        type="button"
+                        onClick={() => openPreview(lesson.id)}
+                        className={[
+                          "w-full text-left group flex items-start gap-3 p-4 rounded-2xl border transition",
+                          "bg-white hover:bg-gray-50 border-gray-200 hover:border-gray-300",
+                        ].join(" ")}
+                      >
+                        <div className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-sm mt-0.5 font-semibold bg-gray-100 text-gray-900">
+                          {index + 1}
+                        </div>
 
-                      return (
-                        <div
-                          key={lesson.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => toggleSelectLesson(lesson.id)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") toggleSelectLesson(lesson.id);
-                          }}
-                          className={[
-                            "group flex items-start gap-3 p-4 rounded-2xl border transition cursor-pointer",
-                            "bg-white hover:bg-gray-50",
-                            isSelected ? "border-green-300 ring-1 ring-green-200" : "border-gray-200",
-                          ].join(" ")}
-                        >
-                          <div
-                            className={[
-                              "flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-sm mt-0.5 font-semibold",
-                              isSelected ? "bg-green-600 text-white" : "bg-gray-100 text-gray-900",
-                            ].join(" ")}
-                          >
-                            {index + 1}
-                          </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                              <h4 className="font-semibold text-gray-900 truncate">{lesson.title}</h4>
+                              <p className="text-sm text-gray-600 mt-1 line-clamp-2">{lesson.description}</p>
 
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between gap-4">
-                              <div className="min-w-0">
-                                <h4 className="font-semibold text-gray-900 truncate">{lesson.title}</h4>
-                                <p className="text-sm text-gray-600 mt-1 line-clamp-2">{lesson.description}</p>
-
-                                {lesson.homeworkDescription ? (
-                                  <div className="mt-2 text-xs text-blue-700 inline-flex items-center gap-1 bg-blue-50 border border-blue-100 rounded-full px-3 py-1">
-                                    <CheckCircle className="w-3.5 h-3.5" />
-                                    Домашнее задание
-                                  </div>
-                                ) : null}
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openPreview(lesson.id);
-                                }}
-                                className="shrink-0 inline-flex items-center gap-2 text-sm px-3 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-300 transition"
-                                aria-label="Смотреть"
-                              >
-                                <PlayCircle className="w-5 h-5 text-gray-700" />
-                                <span className="hidden sm:inline text-gray-800">Смотреть</span>
-                              </button>
+                              {lesson.homeworkDescription ? (
+                                <div className="mt-2 text-xs text-blue-700 inline-flex items-center gap-1 bg-blue-50 border border-blue-100 rounded-full px-3 py-1">
+                                  <CheckCircle className="w-3.5 h-3.5" />
+                                  Домашнее задание
+                                </div>
+                              ) : null}
                             </div>
+
+                            <span className="shrink-0 inline-flex items-center gap-2 text-sm px-3 py-2 rounded-xl border border-gray-200 bg-white group-hover:bg-gray-50 transition">
+                              <PlayCircle className="w-5 h-5 text-gray-700" />
+                              <span className="hidden sm:inline text-gray-800">Смотреть</span>
+                            </span>
                           </div>
                         </div>
-                      );
-                    })}
+                      </button>
+                    ))}
                   </div>
                 )}
               </CardContent>
@@ -822,10 +861,15 @@ ${list}`;
           <div className="space-y-6">
             <Card className="border-0 shadow-sm lg:sticky lg:top-24">
               <CardHeader>
-                <CardTitle>Тарифы</CardTitle>
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle>Тарифы</CardTitle>
+                  <Badge variant="secondary" className="shrink-0">
+                    {tariffs.length || 0}
+                  </Badge>
+                </div>
               </CardHeader>
 
-              <CardContent className="space-y-6">
+              <CardContent className="space-y-4">
                 <div ref={tariffsRef} />
 
                 {tariffsLoading ? (
@@ -839,70 +883,75 @@ ${list}`;
                   <div className="text-sm text-gray-600">Тарифы пока не добавлены.</div>
                 ) : (
                   <div className="space-y-3">
-                    {tariffs.map((t) => (
-                      <div key={t.id} className="rounded-2xl border border-gray-200 p-4 bg-white">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="font-semibold text-gray-900 truncate">{t.title || `Тариф #${t.id}`}</div>
-                            <div className="text-sm text-gray-600 mt-1">{moneySom(t.price)}</div>
+                    {tariffs.map((t, idx) => {
+                      const title = t.title || t.id || `Тариф #${idx + 1}`;
+                      const price = moneySom(t.price);
+
+                      return (
+                        <div
+                          key={t.id}
+                          className={[
+                            "rounded-2xl border p-4 bg-white",
+                            "transition hover:border-gray-300 hover:shadow-sm",
+                          ].join(" ")}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <div className="font-semibold text-gray-900 truncate">{title}</div>
+                              </div>
+
+                              <div className="mt-2 flex items-end gap-2">
+                                <div className="text-2xl font-semibold text-gray-900">{price}</div>
+                              </div>
+
+                              {t.description ? (
+                                <div className="mt-2 text-sm text-gray-600 line-clamp-3">{t.description}</div>
+                              ) : null}
+
+                              <div className="mt-3 grid gap-2 text-sm text-gray-700">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                                  Доступ к урокам курса
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                                  Домашние задания
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                                  Активация токеном после оплаты
+                                </div>
+                              </div>
+                            </div>
                           </div>
 
-                          <a
-                            href={generateWhatsAppTariffLink(t)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="shrink-0"
-                          >
-                            <Button variant="outline" className="gap-2">
-                              <ShoppingCart className="w-4 h-4" />
-                              Купить
-                            </Button>
-                          </a>
+                          <div className="mt-4">
+                            <a
+                              href={generateWhatsAppTariffLink(t)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block"
+                            >
+                              <Button className="w-full gap-2">
+                                <ShoppingCart className="w-4 h-4" />
+                                Купить тариф
+                              </Button>
+                            </a>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
-                <div className="rounded-2xl border border-gray-200 p-4 bg-white">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-semibold">Выбранные уроки</div>
-                    <Badge variant="secondary">{selectedLessons.length}</Badge>
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                  <div className="text-sm font-semibold text-gray-900">Как это работает</div>
+                  <div className="mt-2 text-sm text-gray-700 space-y-2">
+                    <div>1) Выбираешь тариф.</div>
+                    <div>2) Оплачиваешь.</div>
+                    <div>3) Тебе дают токен — активируешь в кабинете.</div>
                   </div>
-
-                  {selectedLessons.length > 0 ? (
-                    <div className="mt-3 space-y-2 max-h-40 overflow-auto pr-1">
-                      {selectedLessons.map((l) => (
-                        <div
-                          key={l.id}
-                          className="flex items-start justify-between gap-3 text-sm border border-gray-100 bg-gray-50 rounded-xl p-2"
-                        >
-                          <span className="text-gray-800 leading-snug">{l.title}</span>
-                          <button
-                            type="button"
-                            onClick={() => toggleSelectLesson(l.id)}
-                            className="text-gray-500 hover:text-red-600 transition"
-                            aria-label="Убрать"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="mt-2 text-sm text-gray-600">Выбери уроки слева — и купи их одним сообщением.</p>
-                  )}
-
-                  <a
-                    className={`mt-4 block ${selectedLessons.length ? "" : "pointer-events-none opacity-50"}`}
-                    href={generateWhatsAppSelectedLessonsLink()}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <Button className="w-full" variant="outline">
-                      Купить выбранные уроки
-                    </Button>
-                  </a>
                 </div>
               </CardContent>
             </Card>
@@ -910,74 +959,134 @@ ${list}`;
         </div>
       </div>
 
+      {/* =========================
+          MODALS
+         ========================= */}
       {isPreviewOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/70" />
+        <>
+          {/* 1) MODAL: VIDEO PREVIEW */}
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4" role="dialog" aria-modal="true">
+            <div className="absolute inset-0 bg-black/70" />
 
-          <div className="relative z-10 w-full max-w-3xl bg-white rounded-2xl overflow-hidden shadow-xl border border-white/10">
-            <div className="flex items-center justify-between px-4 py-3 border-b">
-              <div className="font-semibold truncate pr-3">{activeLesson?.title || "Просмотр урока"}</div>
-              <button
-                type="button"
-                onClick={closePreview}
-                className="p-2 rounded-xl hover:bg-gray-100 transition"
-                aria-label="Закрыть"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+            <div className="relative z-10 w-full max-w-3xl bg-white rounded-2xl overflow-hidden shadow-xl border border-white/10">
+              <div className="flex items-center justify-between px-4 py-3 border-b">
+                <div className="font-semibold truncate pr-3">{activeLesson?.title || "Просмотр урока"}</div>
+                <button
+                  type="button"
+                  onClick={closePreview}
+                  className="p-2 rounded-xl hover:bg-gray-100 transition"
+                  aria-label="Закрыть"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
 
-            <div className="relative bg-gray-950">
-              <div ref={ytWrapRef} className="relative w-full" style={{ paddingBottom: "56.25%" }}>
-                {fallbackIframeId ? (
-                  <iframe
-                    title="lesson-video"
-                    className="absolute inset-0 w-full h-full"
-                    src={`https://www.youtube-nocookie.com/embed/${fallbackIframeId}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
-                    allow="autoplay; encrypted-media; picture-in-picture"
-                    allowFullScreen
-                  />
-                ) : (
-                  <div ref={ytMountRef} className="absolute inset-0 w-full h-full" />
-                )}
+              <div className="relative bg-gray-950">
+                <div className="relative w-full" style={{ paddingBottom: "56.25%" }}>
+                  {/* VIDEO */}
+                  {fallbackIframeId ? (
+                    <iframe
+                      title="lesson-video"
+                      className="absolute inset-0 w-full h-full"
+                      src={`https://www.youtube-nocookie.com/embed/${fallbackIframeId}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
+                      allow="autoplay; encrypted-media; picture-in-picture"
+                      allowFullScreen
+                    />
+                  ) : (
+                    <div ref={ytMountRef} className="absolute inset-0 w-full h-full" />
+                  )}
 
-                {!videoError && isPaywallOpen && (
-                  <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 z-30">
-                    <div className="w-full max-w-md bg-white rounded-2xl p-5 shadow-xl">
-                      <div className="text-lg font-semibold">У вас нет доступа</div>
-                      <p className="text-sm text-gray-600 mt-1">
-                        Вы можете посмотреть только первые {PREVIEW_SECONDS} секунд. Чтобы получить полный доступ — купите тариф.
-                      </p>
+                  {/* ✅ SHIELD: делаем видео НЕ кликабельным */}
+                  {!videoError && (
+                    <div
+                      className="absolute inset-0 z-20"
+                      aria-hidden="true"
+                      style={{
+                        cursor: "not-allowed",
+                        // перехватываем клики/тач — видео не получит управление
+                        pointerEvents: "auto",
+                        background: "transparent",
+                      }}
+                    />
+                  )}
 
-                      <div className="mt-4 grid grid-cols-2 gap-3">
-                        <Button variant="outline" onClick={closePreview}>
-                          Закрыть
-                        </Button>
-                        <Button
-                          onClick={() => {
-                            closePreview();
-                            setTimeout(() => scrollToTariffs(), 100);
-                          }}
-                        >
-                          Купить доступ
-                        </Button>
-                      </div>
+                  {/* ERROR */}
+                  {videoError && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white/90 px-6 text-center z-30">
+                      <div className="text-base font-semibold mb-2">Видео не загрузилось</div>
+                      <div className="text-sm text-white/70 break-words">{videoError}</div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {videoError && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white/90 px-6 text-center z-30">
-                    <div className="text-base font-semibold mb-2">Видео не загрузилось</div>
-                    <div className="text-sm text-white/70 break-words">{videoError}</div>
-                  </div>
-                )}
+                  {/* LOADING */}
+                  {!videoError && !isVideoReady && (
+                    <div className="absolute inset-0 flex items-center justify-center text-white/70 text-sm z-10">
+                      Загрузка видео...
+                    </div>
+                  )}
+
+                  {isVideoEnded ? null : null}
+                </div>
               </div>
             </div>
-
-            <div className="px-4 py-3 bg-gray-50 border-t text-sm text-gray-600" />
           </div>
-        </div>
+
+          {/* 2) MODAL: PAYWALL (через 5 сек, логика та же) */}
+          {!videoError && isPaywallOpen && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center px-4" role="dialog" aria-modal="true">
+              <div
+                className="absolute inset-0 bg-black/60"
+                onClick={closePreview}
+                role="button"
+                tabIndex={-1}
+                aria-label="Закрыть"
+              />
+
+              <div className="relative z-10 w-full max-w-md bg-white rounded-2xl p-6 shadow-2xl border border-white/10">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xl font-semibold text-gray-900">Доступ ограничен</div>
+                    <div className="text-sm text-gray-600 mt-1">
+                      Ты увидел только превью. Полный урок открывается после покупки тарифа.
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={closePreview}
+                    className="p-2 rounded-xl hover:bg-gray-100 transition"
+                    aria-label="Закрыть"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                  <div className="text-sm font-semibold text-gray-900">Что дальше?</div>
+                  <div className="mt-2 text-sm text-gray-700 space-y-2">
+                    <div>1) Выбираешь тариф справа.</div>
+                    <div>2) Оплачиваешь.</div>
+                    <div>3) Получаешь токен и активируешь — уроки откроются.</div>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <Button variant="outline" onClick={closePreview}>
+                    Закрыть
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      closePreview();
+                      setTimeout(() => scrollToTariffs(), 120);
+                    }}
+                  >
+                    Выбрать тариф
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

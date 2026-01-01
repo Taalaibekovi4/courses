@@ -1,3 +1,4 @@
+// src/pages/StudentCoursePage.jsx
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useParams, useLocation, Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -9,6 +10,7 @@ import {
   Clock,
   XCircle,
   Lock,
+  RefreshCcw,
 } from "lucide-react";
 
 import { useAuth } from "../contexts/AuthContext.jsx";
@@ -42,6 +44,7 @@ function getYouTubeId(raw) {
 function statusBadge(status) {
   if (status === "accepted")
     return <Badge className="bg-green-600 text-white border-transparent">Принято</Badge>;
+  if (status === "examination") return <Badge variant="outline">На проверке</Badge>;
   if (status === "rework") return <Badge variant="secondary">На доработку</Badge>;
   if (status === "declined") return <Badge variant="destructive">Отклонено</Badge>;
   if (status) return <Badge variant="outline">Отправлено</Badge>;
@@ -50,6 +53,7 @@ function statusBadge(status) {
 
 function LessonStatusIcon({ status }) {
   if (status === "accepted") return <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />;
+  if (status === "examination") return <Clock className="w-5 h-5 text-blue-500 flex-shrink-0" />;
   if (status === "rework") return <Clock className="w-5 h-5 text-orange-600 flex-shrink-0" />;
   if (status === "declined") return <XCircle className="w-5 h-5 text-red-600 flex-shrink-0" />;
   return <PlayCircle className="w-5 h-5 text-gray-400 flex-shrink-0" />;
@@ -162,26 +166,68 @@ export function StudentCoursePage() {
     return (data.openedLessons || {})[lessonKey] || null;
   }, [data.openedLessons, lessonKey]);
 
-  const isLessonOpened = useMemo(() => {
-    return Boolean(currentLesson?.is_opened) || Boolean(openedLesson);
-  }, [currentLesson?.is_opened, openedLesson]);
+  // важно: урок "открыт" по флагу, но видео показываем ТОЛЬКО если openLesson реально вернул ссылку/ID
+  const serverOpenedFlag = Boolean(currentLesson?.is_opened);
+  const sessionOpenedFlag = Boolean(openedLesson);
+  const lessonOpenedForUI = serverOpenedFlag || sessionOpenedFlag;
 
   const remainingVideos = useMemo(() => {
     const v = course?.access?.remaining_videos;
     return v == null ? null : Number(v);
   }, [course?.access?.remaining_videos]);
 
-  const openCurrentLesson = useCallback(async () => {
+  const pickRawVideoFromOpened = useCallback(() => {
+    const o = openedLesson || {};
+    const v = o.__picked_video || "";
+    if (norm(v)) return v;
+
+    return (
+      o.video_url ||
+      o.videoUrl ||
+      o.video ||
+      o.file_url ||
+      o.fileUrl ||
+      o.youtube_video_id ||
+      o.youtubeVideoId ||
+      o.youtube_id ||
+      o.youtubeId ||
+      ""
+    );
+  }, [openedLesson]);
+
+  const ensureVideoLoadedIfAlreadyOpened = useCallback(async () => {
+    // если на сервере is_opened=true (например, урок уже ранее был открыт),
+    // но в сессии нет openedLesson (обновили страницу), можно запросить видео без списания.
     if (!lessonKey) return;
+    if (!serverOpenedFlag) return;
+    if (openedLesson) return;
+
     setOpenErr("");
-    const res = await data.openLesson?.(lessonKey, { force: true });
+    const res = await data.openLesson?.(lessonKey, { force: false });
     if (res?.ok === false) {
-      setOpenErr(res?.error || "Нет доступа к видео");
-      toast.error(res?.error || "Нет доступа к видео");
-    } else {
-      toast.success("Видео открыто");
+      setOpenErr(res?.error || "Не удалось загрузить видео");
     }
-  }, [data, lessonKey]);
+  }, [data, lessonKey, serverOpenedFlag, openedLesson]);
+
+  useEffect(() => {
+    ensureVideoLoadedIfAlreadyOpened();
+  }, [ensureVideoLoadedIfAlreadyOpened]);
+
+  const openCurrentLesson = useCallback(
+    async ({ force }) => {
+      if (!lessonKey) return;
+      setOpenErr("");
+      const res = await data.openLesson?.(lessonKey, { force: !!force });
+      if (res?.ok === false) {
+        setOpenErr(res?.error || "Нет доступа к видео");
+        toast.error(res?.error || "Нет доступа к видео");
+      } else {
+        toast.success(force ? "Видео открыто" : "Видео загружено");
+        data.loadMyCourses?.(); // чтобы remaining_videos и is_opened обновились
+      }
+    },
+    [data, lessonKey]
+  );
 
   const myHomeworks = useMemo(
     () => (Array.isArray(data.myHomeworks) ? data.myHomeworks : []),
@@ -205,7 +251,6 @@ export function StudentCoursePage() {
   }, [myHomeworks, currentLesson, courseId]);
 
   useEffect(() => {
-    // ✅ всегда показываем то, что студент уже отправлял
     setHomeworkText(myHwForLesson?.content || "");
     setLinkInput("");
   }, [myHwForLesson?.id]);
@@ -214,7 +259,18 @@ export function StudentCoursePage() {
     const map = new Map();
     const cid = String(courseId);
 
-    const rank = (s) => (s === "accepted" ? 3 : s === "rework" ? 2 : s === "declined" ? 1 : s ? 0.5 : 0);
+    const rank = (s) =>
+      s === "accepted"
+        ? 4
+        : s === "examination"
+        ? 3
+        : s === "rework"
+        ? 2
+        : s === "declined"
+        ? 1
+        : s
+        ? 0.5
+        : 0;
 
     myHomeworks
       .filter((hw) => getHwCourseId(hw) === cid)
@@ -230,51 +286,46 @@ export function StudentCoursePage() {
 
   const hwStatus = getHwStatus(myHwForLesson);
   const isAccepted = hwStatus === "accepted";
-  const canEdit = !!currentLesson && !isAccepted;
-
-  const canResend = hwStatus === "rework" || hwStatus === "declined";
   const hasHw = !!myHwForLesson?.id;
+  const canEdit = !!currentLesson && !isAccepted;
 
   const actionLabel = useMemo(() => {
     if (isAccepted) return "Принято — отправка закрыта";
     if (!hasHw) return "Отправить";
-    if (canResend) return "Отправить снова";
     return "Сохранить изменения";
-  }, [isAccepted, hasHw, canResend]);
-
-  const pickRawVideo = useCallback(() => {
-    const o = openedLesson || {};
-    const v = o.__picked_video || "";
-    if (norm(v)) return v;
-
-    return (
-      o.video_url ||
-      o.videoUrl ||
-      o.video ||
-      o.file_url ||
-      o.fileUrl ||
-      o.youtube_video_id ||
-      o.youtubeVideoId ||
-      o.youtube_id ||
-      o.youtubeId ||
-      ""
-    );
-  }, [openedLesson]);
+  }, [isAccepted, hasHw]);
 
   const renderVideo = useCallback(() => {
     const isLoading = !!data.loading?.openLesson?.[lessonKey];
 
-    if (!isLessonOpened) {
+    // ВИДЕО показываем только если openLesson реально дал ссылку/ID
+    const raw = pickRawVideoFromOpened();
+    const ytId = getYouTubeId(raw);
+    const directUrl = norm(raw);
+
+    const hasPlayable = Boolean(ytId || directUrl);
+
+    if (!hasPlayable) {
       const noRemaining = remainingVideos !== null && Number(remainingVideos) <= 0;
+
+      // если урок уже открыт на сервере — показываем кнопку "Загрузить видео" (force:false)
+      const canLoadWithoutSpend = serverOpenedFlag;
+
       return (
         <div className="w-full h-full flex items-center justify-center text-white/80 text-center px-4">
           <div className="max-w-md">
             <div className="flex items-center justify-center gap-2 mb-3">
               <Lock className="w-5 h-5" />
-              <div className="font-medium">Видео закрыто</div>
+              <div className="font-medium">
+                {canLoadWithoutSpend ? "Видео доступно, но не загружено" : "Видео закрыто"}
+              </div>
             </div>
+
             <div className="text-sm text-white/70">
-              Нажмите “Открыть видео”, чтобы получить доступ к уроку.
+              {canLoadWithoutSpend
+                ? "Нажмите “Загрузить видео”, чтобы получить ссылку на воспроизведение."
+                : "Нажмите “Открыть видео”, чтобы получить доступ к уроку."}
+
               {remainingVideos !== null ? (
                 <>
                   <br />
@@ -282,19 +333,34 @@ export function StudentCoursePage() {
                 </>
               ) : null}
             </div>
-            <div className="mt-4">
-              <Button
-                type="button"
-                onClick={openCurrentLesson}
-                disabled={isLoading || noRemaining}
-                className="bg-white text-black hover:bg-white/90"
-              >
-                {isLoading ? "Открываем..." : "Открыть видео"}
-              </Button>
-              {noRemaining ? (
-                <div className="mt-2 text-xs text-white/60">Нет доступных открытий видео</div>
+
+            <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
+              {canLoadWithoutSpend ? (
+                <Button
+                  type="button"
+                  onClick={() => openCurrentLesson({ force: false })}
+                  disabled={isLoading}
+                  className="bg-white text-black hover:bg-white/90"
+                >
+                  <RefreshCcw className="w-4 h-4 mr-2" />
+                  {isLoading ? "Загрузка..." : "Загрузить видео"}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  onClick={() => openCurrentLesson({ force: true })}
+                  disabled={isLoading || noRemaining}
+                  className="bg-white text-black hover:bg-white/90"
+                >
+                  {isLoading ? "Открываем..." : "Открыть видео"}
+                </Button>
+              )}
+
+              {!canLoadWithoutSpend && noRemaining ? (
+                <div className="w-full mt-2 text-xs text-white/60">Нет доступных открытий видео</div>
               ) : null}
-              {openErr ? <div className="mt-2 text-xs text-red-300">{openErr}</div> : null}
+
+              {openErr ? <div className="w-full mt-2 text-xs text-red-300">{openErr}</div> : null}
             </div>
           </div>
         </div>
@@ -304,9 +370,6 @@ export function StudentCoursePage() {
     if (isLoading) {
       return <div className="w-full h-full flex items-center justify-center text-white/70">Загрузка видео...</div>;
     }
-
-    const raw = pickRawVideo();
-    const ytId = getYouTubeId(raw);
 
     if (ytId) {
       const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(
@@ -324,22 +387,15 @@ export function StudentCoursePage() {
       );
     }
 
-    const url = norm(raw);
-    if (url) return <video src={url} controls className="w-full h-full object-cover bg-black" preload="metadata" />;
-
-    return (
-      <div className="w-full h-full flex items-center justify-center text-white/70 text-center px-4">
-        {openErr || "Видео недоступно"}
-      </div>
-    );
+    return <video src={directUrl} controls className="w-full h-full object-cover bg-black" preload="metadata" />;
   }, [
     data.loading?.openLesson,
     lessonKey,
-    isLessonOpened,
     remainingVideos,
-    openCurrentLesson,
     openErr,
-    pickRawVideo,
+    pickRawVideoFromOpened,
+    serverOpenedFlag,
+    openCurrentLesson,
   ]);
 
   function addLinkIntoHomeworkText() {
@@ -365,13 +421,12 @@ export function StudentCoursePage() {
     const res = await data.submitHomework?.({
       lessonId: lid,
       content: text,
-      homeworkId: myHwForLesson?.id ?? null,
+      homeworkId: hasHw ? myHwForLesson.id : null,
     });
 
     if (res?.ok) {
-      if (!hasHw) toast.success("Отправлено");
-      else if (canResend) toast.success("Отправлено повторно");
-      else toast.success("Изменения сохранены");
+      toast.success(!hasHw ? "Отправлено" : "Изменения сохранены");
+      data.loadMyHomeworks?.();
     } else {
       toast.error(res?.error || "Не удалось отправить ДЗ");
     }
@@ -413,8 +468,7 @@ export function StudentCoursePage() {
           <h1 className="text-3xl mb-2">{courseTitle}</h1>
           {course?.access?.remaining_videos != null ? (
             <p className="text-gray-600">
-              Осталось открытий видео:{" "}
-              <span className="font-medium">{course.access.remaining_videos}</span>
+              Осталось открытий видео: <span className="font-medium">{course.access.remaining_videos}</span>
             </p>
           ) : (
             <p className="text-gray-600">Курс</p>
@@ -437,7 +491,9 @@ export function StudentCoursePage() {
                         const id = getLessonId(lesson) || `lesson_${idx}`;
                         const st = lessonHomeworkStatusMap.get(id);
                         const active = String(selectedLessonId) === String(id);
-                        const opened = !!lesson?.is_opened;
+
+                        const openedInSession = Boolean((data.openedLessons || {})[id]);
+                        const opened = Boolean(lesson?.is_opened) || openedInSession;
 
                         return (
                           <button
@@ -453,9 +509,7 @@ export function StudentCoursePage() {
                               <LessonStatusIcon status={st} />
                               <div className="flex-1 min-w-0">
                                 <p className="font-medium truncate">{lesson?.title || `Урок ${idx + 1}`}</p>
-                                <p className="text-xs text-gray-600 truncate">
-                                  {opened ? "Открыт" : "Не открыт"}
-                                </p>
+                                <p className="text-xs text-gray-600 truncate">{opened ? "Открыт" : "Не открыт"}</p>
                               </div>
                               {!opened ? <Lock className="w-4 h-4 text-gray-500" /> : null}
                             </div>
@@ -485,6 +539,12 @@ export function StudentCoursePage() {
                   </CardHeader>
                   <CardContent>
                     <div className="aspect-video bg-black rounded-lg overflow-hidden">{renderVideo()}</div>
+
+                    {lessonOpenedForUI && !openedLesson ? (
+                      <div className="mt-3 text-xs text-gray-500">
+                        Урок отмечен как открытый, но ссылка на видео не загружена (обычно после обновления страницы).
+                      </div>
+                    ) : null}
                   </CardContent>
                 </Card>
 
@@ -493,28 +553,23 @@ export function StudentCoursePage() {
                     <CardTitle>Домашнее задание</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    {/* ✅ показываем студенту, что он уже отправлял */}
-                    {myHwForLesson ? (
+                    {hasHw ? (
                       <div className="mb-4 p-3 bg-gray-50 rounded border border-gray-200">
                         <div className="flex items-start justify-between gap-3">
-                          <div className="text-sm font-medium">Ваше отправленное ДЗ</div>
+                          <div className="text-sm font-medium">Вы уже отправили ДЗ</div>
                           {statusBadge(hwStatus)}
                         </div>
 
                         {getHwDate(myHwForLesson) ? (
-                          <div className="text-xs text-gray-500 mt-1">
-                            Дата: {String(getHwDate(myHwForLesson))}
-                          </div>
+                          <div className="text-xs text-gray-500 mt-1">Дата: {String(getHwDate(myHwForLesson))}</div>
                         ) : null}
 
-                        <div className="mt-3 text-sm whitespace-pre-wrap text-gray-800">
-                          {myHwForLesson?.content || "—"}
+                        <div className="mt-2 text-xs text-gray-600">
+                          Новое ДЗ создать нельзя — можно редактировать это же, пока статус не станет “Принято”.
                         </div>
                       </div>
                     ) : (
-                      <p className="mb-4 text-sm text-gray-600">
-                        Можно отправить решение текстом и ссылкой.
-                      </p>
+                      <p className="mb-4 text-sm text-gray-600">Можно отправить решение текстом и ссылкой.</p>
                     )}
 
                     {getHwTeacherComment(myHwForLesson) ? (
@@ -559,21 +614,12 @@ export function StudentCoursePage() {
                           Принято — отправка закрыта
                         </Button>
                       ) : (
-                        <Button
-                          onClick={handleSendHomework}
-                          disabled={!canEdit || !!data.loading?.submitHomework}
-                        >
+                        <Button onClick={handleSendHomework} disabled={!canEdit || !!data.loading?.submitHomework}>
                           <Send className="w-4 h-4 mr-2" />
                           {data.loading?.submitHomework ? "Отправка..." : actionLabel}
                         </Button>
                       )}
                     </div>
-
-                    {!isAccepted && hasHw && !canResend ? (
-                      <div className="mt-3 text-xs text-gray-500">
-                        После первой отправки вы не создаёте новую заявку — вы редактируете текущую, пока преподаватель не отправит “На доработку/Отклонено”.
-                      </div>
-                    ) : null}
                   </CardContent>
                 </Card>
               </>

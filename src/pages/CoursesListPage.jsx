@@ -1,3 +1,4 @@
+// src/pages/CoursesListPage.jsx
 import React, { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Search, BookOpen } from "lucide-react";
@@ -14,14 +15,29 @@ import { Button } from "../components/ui/button.jsx";
 import { Input } from "../components/ui/input.jsx";
 import { Badge } from "../components/ui/badge.jsx";
 
-const HERO_BG =
-  "https://images.unsplash.com/photo-1513258496099-48168024aec0?auto=format&fit=crop&w=1800&q=80";
 
-const FALLBACK_BG =
-  "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1400&q=80";
 
 const norm = (s) => String(s ?? "").trim();
 const lower = (s) => norm(s).toLowerCase();
+
+/** base для медиа (если бэк отдаёт /media/...) */
+const API_BASE_RAW =
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) || "";
+
+const API_ORIGIN = norm(API_BASE_RAW).replace(/\/api\/?$/i, "").replace(/\/$/, "");
+
+function toAbsUrl(url) {
+  const u = norm(url);
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u)) return u;
+  if (u.startsWith("//")) return `https:${u}`;
+  if (u.startsWith("/")) {
+    if (API_ORIGIN) return `${API_ORIGIN}${u}`;
+    return u;
+  }
+  if (API_ORIGIN) return `${API_ORIGIN}/${u}`;
+  return u;
+}
 
 function getTeacherName(course) {
   return (
@@ -56,6 +72,12 @@ function getCourseCategoryName(course, categories) {
   return cat?.name || cat?.title || "Категория";
 }
 
+function getCourseImg(course) {
+  const img = course?.photo || course?.imageUrl || course?.coverUrl || course?.image || "";
+  // ✅ НИКАКОГО FALLBACK: если фото нет — вернётся пустая строка
+  return toAbsUrl(img);
+}
+
 export function CoursesListPage() {
   const data = useData?.() || {};
   const courses = Array.isArray(data?.courses) ? data.courses : [];
@@ -82,11 +104,6 @@ export function CoursesListPage() {
   return (
     <div className="min-h-screen bg-gray-50 overflow-x-hidden">
       <section className="relative text-white w-screen left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] overflow-hidden">
-        <div
-          className="absolute inset-0 bg-cover bg-center"
-          style={{ backgroundImage: `url(${HERO_BG})` }}
-          aria-hidden="true"
-        />
         <div className="absolute inset-0 bg-gradient-to-r from-blue-700/85 to-purple-700/75" />
         <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/20 to-transparent" />
 
@@ -145,6 +162,7 @@ export function CoursesListPage() {
                   lessonsCount,
                   categoryName: getCourseCategoryName(course, categories),
                   teacherName: getTeacherName(course),
+                  photo: course?.photo ?? null, // ✅ для CoursePage
                   teacherId:
                     course?.instructor_id ??
                     course?.instructorId ??
@@ -163,6 +181,8 @@ export function CoursesListPage() {
                     null,
                 };
 
+                const img = getCourseImg(course);
+
                 return (
                   <Link
                     key={String(course?.id ?? courseKey)}
@@ -171,11 +191,22 @@ export function CoursesListPage() {
                     className="block"
                   >
                     <Card className="group relative overflow-hidden border-0 shadow-sm hover:shadow-xl transition-all duration-300 max-w-[360px] mx-auto">
-                      <div
-                        className="absolute inset-0 bg-cover bg-center"
-                        style={{ backgroundImage: `url(${FALLBACK_BG})` }}
-                        aria-hidden="true"
-                      />
+                      {/* ✅ фото курса (если нет — блока просто не будет) */}
+                      {img ? (
+                        <div className="absolute inset-0">
+                          <img
+                            src={img}
+                            alt={course?.title || "Курс"}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                            onError={(e) => {
+                              // ✅ если битая ссылка — просто убираем картинку, без фолбека
+                              e.currentTarget.style.display = "none";
+                            }}
+                          />
+                        </div>
+                      ) : null}
+
                       <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/20" />
                       <div className="absolute inset-0 opacity-0 sm:group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-r from-blue-600/10 to-purple-600/10" />
 
@@ -220,7 +251,9 @@ export function CoursesListPage() {
                               <span className="font-semibold">{lessonsCount}</span>
                             </div>
 
-                            <Button className="w-full bg-white text-gray-900 hover:bg-white/90">Подробнее</Button>
+                            <Button className="w-full bg-white text-gray-900 hover:bg-white/90">
+                              Подробнее
+                            </Button>
                           </div>
                         </CardContent>
                       </div>

@@ -1,194 +1,189 @@
 import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../contexts/AuthContext.jsx";
+import axios from "axios";
 
+import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card.jsx";
 import { Button } from "../components/ui/button.jsx";
 import { Input } from "../components/ui/input.jsx";
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-} from "../components/ui/card.jsx";
-import { Alert, AlertDescription } from "../components/ui/alert.jsx";
 
-const KG_PREFIX = "+996";
-const phoneKG = /^\+996\d{9}$/;
+const API_BASE =
+  (typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    import.meta.env.VITE_API_URL) ||
+  "";
 
-const norm = (s) => String(s ?? "").trim();
-const onlyDigits = (s) => String(s ?? "").replace(/\D/g, "");
+const USERNAME_REGEX = /^[\w.@+-]+$/;
 
-function normalizeKgPhone(value) {
-  const digits = onlyDigits(value);
-  const tail = digits.startsWith("996") ? digits.slice(3) : digits;
-  const tail9 = tail.slice(0, 9);
-  return `${KG_PREFIX}${tail9}`;
-}
-
-export function RegisterPage() {
+export default function RegisterPage() {
   const navigate = useNavigate();
-  const { register } = useAuth();
-
-  // ФИО в Swagger нет — оставил как поле, но не блокирую и не отправляю
-  const [fullName, setFullName] = useState("");
 
   const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState(KG_PREFIX);
+  const [username, setUsername] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
 
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
-  const phoneValue = useMemo(() => normalizeKgPhone(phone), [phone]);
+  const usernameValid = useMemo(
+    () => USERNAME_REGEX.test(username),
+    [username]
+  );
 
-  const pwdLenOk = String(password || "").length >= 8;
-  const pwdMatch = String(password || "") === String(password2 || "");
+  const passwordsMatch = password && password === password2;
 
   const canSubmit = useMemo(() => {
-    if (!norm(email)) return false;
-    if (!phoneKG.test(phoneValue)) return false;
-    if (!pwdLenOk) return false;
-    if (!pwdMatch) return false;
+    if (!email || !username || !password || !password2) return false;
+    if (!usernameValid) return false;
+    if (password.length < 8) return false;
+    if (!passwordsMatch) return false;
     return true;
-  }, [email, phoneValue, pwdLenOk, pwdMatch]);
+  }, [email, username, password, password2, usernameValid, passwordsMatch]);
 
-  async function handleSubmit(e) {
+  async function onSubmit(e) {
     e.preventDefault();
-    setError("");
-
-    const mail = norm(email).toLowerCase();
-
-    if (!mail) return setError("Введите Email");
-    if (!phoneKG.test(phoneValue)) return setError("Телефон должен быть в формате +996XXXXXXXXX");
-    if (!pwdLenOk) return setError("Пароль минимум 8 символов");
-    if (!pwdMatch) return setError("Пароли не совпадают");
+    if (!canSubmit || pending) return;
 
     setPending(true);
+    setError("");
+
     try {
-      const res = await register({
-        email: mail,
-        phone: phoneValue,
+      await axios.post(`${API_BASE}/auth/register/`, {
+        email: email.trim(),
+        username: username.trim(),
+        phone: phone.trim() || null,
         password,
         password2,
       });
 
-      if (res?.ok) {
-        // по умолчанию это student — отправляем в кабинет
-        navigate("/dashboard", { replace: true });
-        return;
-      }
+      navigate("/login");
+    } catch (e) {
+      const d = e?.response?.data;
 
-      setError(res?.error || "Не удалось зарегистрироваться. Проверьте данные.");
-    } catch (err) {
-      setError("Ошибка регистрации. Попробуйте ещё раз.");
+      if (typeof d === "string") {
+        setError(d);
+      } else if (d?.email?.[0]) {
+        setError(d.email[0]);
+      } else if (d?.username?.[0]) {
+        setError(d.username[0]);
+      } else if (d?.password?.[0]) {
+        setError(d.password[0]);
+      } else if (d?.password2?.[0]) {
+        setError(d.password2[0]);
+      } else {
+        setError("Ошибка регистрации");
+      }
     } finally {
       setPending(false);
     }
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+    <div className="min-h-screen flex items-center justify-center bg-[var(--sb-bg)] px-4">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>Регистрация</CardTitle>
-          <CardDescription>Создайте аккаунт для доступа к курсам</CardDescription>
         </CardHeader>
 
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-
-            <div className="space-y-2">
-              <label className="text-sm">ФИО</label>
+          <form onSubmit={onSubmit} className="space-y-4">
+            {/* EMAIL */}
+            <div>
+              <label className="text-sm block mb-1">Email *</label>
               <Input
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Например: Асан Асанов"
-                disabled={pending}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm">Email</label>
-              <Input
+                type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@example.com"
-                type="email"
                 autoComplete="email"
                 required
                 disabled={pending}
               />
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm">Телефон</label>
+            {/* USERNAME */}
+            <div>
+              <label className="text-sm block mb-1">Имя пользователя *</label>
               <Input
-                value={phoneValue}
-                onChange={(e) => setPhone(e.target.value)}
-                inputMode="tel"
-                placeholder="+996700123456"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="user_name"
+                autoComplete="username"
                 required
                 disabled={pending}
               />
-              <div className="text-xs text-gray-500">
-                Формат: <span className="font-medium">+996XXXXXXXXX</span>
-              </div>
+              {!usernameValid && username && (
+                <div className="text-xs text-red-500 mt-1">
+                  Только буквы, цифры и символы @ . + - _
+                </div>
+              )}
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm">Пароль</label>
+            {/* PHONE */}
+            <div>
+              <label className="text-sm block mb-1">Номер телефона</label>
+              <Input
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+996700000000"
+                disabled={pending}
+              />
+            </div>
+
+            {/* PASSWORD */}
+            <div>
+              <label className="text-sm block mb-1">Пароль *</label>
               <Input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Минимум 8 символов"
                 autoComplete="new-password"
                 required
                 disabled={pending}
               />
-              {!pwdLenOk && norm(password) && (
-                <div className="text-xs text-red-600">Минимум 8 символов</div>
-              )}
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm">Повторите пароль</label>
+            {/* PASSWORD2 */}
+            <div>
+              <label className="text-sm block mb-1">Повторите пароль *</label>
               <Input
                 type="password"
                 value={password2}
                 onChange={(e) => setPassword2(e.target.value)}
-                placeholder="Повторите пароль"
                 autoComplete="new-password"
                 required
                 disabled={pending}
               />
-              {!pwdMatch && norm(password2) && (
-                <div className="text-xs text-red-600">Пароли не совпадают</div>
+              {password2 && !passwordsMatch && (
+                <div className="text-xs text-red-500 mt-1">
+                  Пароли не совпадают
+                </div>
               )}
             </div>
 
-            <Button type="submit" className="w-full" disabled={!canSubmit || pending}>
-              {pending ? "Создаём аккаунт..." : "Зарегистрироваться"}
-            </Button>
-          </form>
+            {error && (
+              <div className="text-sm text-red-600 bg-red-500/10 p-2 rounded">
+                {error}
+              </div>
+            )}
 
-          <div className="mt-5 text-sm text-gray-600">
-            Уже есть аккаунт?{" "}
-            <Link to="/login" className="text-blue-700 hover:underline font-medium">
-              Войти
-            </Link>
-          </div>
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={!canSubmit || pending}
+            >
+              {pending ? "Регистрация..." : "Зарегистрироваться"}
+            </Button>
+
+            <div className="text-sm text-center text-[var(--sb-muted)]">
+              Уже есть аккаунт?{" "}
+              <Link to="/login" className="text-[var(--sb-accent)]">
+                Войти
+              </Link>
+            </div>
+          </form>
         </CardContent>
       </Card>
     </div>
   );
 }
-
-export default RegisterPage;

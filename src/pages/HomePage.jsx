@@ -1,6 +1,7 @@
 // src/pages/HomePage.jsx
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
+import axios from "axios";
 import { BadgeCheck, Rocket, ShieldCheck, Users, BookOpen } from "lucide-react";
 
 import { useData } from "../contexts/DataContext.jsx";
@@ -17,21 +18,106 @@ const FALLBACK_TEACHER_BG =
 const FALLBACK_CAT_BG =
   "https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=1200&q=80";
 
+const FALLBACK_COURSE_BG =
+  "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1400&q=80";
+
+const str = (v) => String(v ?? "").trim();
+
+function getApiBase() {
+  const raw =
+    (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) ||
+    process.env.REACT_APP_API_URL ||
+    "/api";
+  return str(raw).replace(/\/+$/, "");
+}
+
+/**
+ * Делает ссылку абсолютной:
+ * - если url уже http(s) — оставляем
+ * - если url типа /media/... — приклеиваем домен из VITE_API_URL (если есть)
+ */
+const API_BASE_RAW =
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) || "";
+
+const API_ORIGIN = str(API_BASE_RAW).replace(/\/api\/?$/i, "").replace(/\/$/, "");
+
+function toAbsUrl(url) {
+  const u = str(url);
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u)) return u;
+  if (u.startsWith("//")) return `https:${u}`;
+  if (u.startsWith("/")) {
+    if (API_ORIGIN) return `${API_ORIGIN}${u}`;
+    return u;
+  }
+  if (API_ORIGIN) return `${API_ORIGIN}/${u}`;
+  return u;
+}
+
+function extractSettings(payload) {
+  if (!payload) return null;
+  if (Array.isArray(payload)) return payload[0] || null;
+  if (Array.isArray(payload?.results)) return payload.results[0] || null;
+  if (Array.isArray(payload?.data)) return payload.data[0] || null;
+  return payload;
+}
+
 const getTeacherImg = (teacher) => {
   const img = teacher?.avatarUrl || teacher?.photoUrl || teacher?.image || "";
-  return img ? String(img) : FALLBACK_TEACHER_BG;
+  const abs = toAbsUrl(img);
+  return abs || FALLBACK_TEACHER_BG;
 };
 
 const getCategoryImg = (category) => {
-  const img = category?.imageUrl || category?.coverUrl || category?.image || "";
-  return img ? String(img) : FALLBACK_CAT_BG;
+  const img = category?.photo || category?.imageUrl || category?.coverUrl || category?.image || "";
+  const abs = toAbsUrl(img);
+  return abs || FALLBACK_CAT_BG;
+};
+
+const getCourseImg = (course, teacher) => {
+  const img = course?.photo || course?.imageUrl || course?.coverUrl || course?.image || "";
+  const abs = toAbsUrl(img);
+  if (abs) return abs;
+  const teacherImg = getTeacherImg(teacher);
+  return teacherImg || FALLBACK_COURSE_BG;
 };
 
 const HomePage = () => {
   const data = useData();
-  const categories = Array.isArray(data.categories) ? data.categories : [];
-  const courses = Array.isArray(data.courses) ? data.courses : [];
-  const teachers = Array.isArray(data.teachers) ? data.teachers : [];
+
+  const categories = Array.isArray(data?.categories) ? data.categories : [];
+  const courses = Array.isArray(data?.courses) ? data.courses : [];
+  const teachers = Array.isArray(data?.teachers) ? data.teachers : [];
+
+  // если DataContext уже отдаёт settings — используем сразу
+  const settingsFromCtx = data?.settings || null;
+
+  // если не отдаёт — тянем сами
+  const [settings, setSettings] = useState(settingsFromCtx);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+
+  useEffect(() => {
+    if (settingsFromCtx) setSettings(settingsFromCtx);
+  }, [settingsFromCtx]);
+
+  const loadSettings = useCallback(async () => {
+    if (settingsFromCtx) return;
+    setSettingsLoading(true);
+    try {
+      const api = axios.create({ baseURL: getApiBase(), timeout: 20000 });
+      const r = await api.get("/settings/");
+      setSettings(extractSettings(r.data) || null);
+    } catch (e) {
+      console.error(e);
+      setSettings(null);
+    } finally {
+      setSettingsLoading(false);
+    }
+  }, [settingsFromCtx]);
+
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
 
   const teacherById = useMemo(() => {
     const m = new Map();
@@ -43,11 +129,31 @@ const HomePage = () => {
 
   const heroTeacher = useMemo(() => {
     const firstCourse = courses?.[0];
-    const t = firstCourse?.teacherId ? teacherById.get(firstCourse.teacherId) : firstCourse?.teacher || null;
+    const t = firstCourse?.teacherId
+      ? teacherById.get(firstCourse.teacherId)
+      : firstCourse?.teacher || null;
     return t || teachers?.[0] || null;
   }, [courses, teachers, teacherById]);
 
-  const heroBg = heroTeacher ? getTeacherImg(heroTeacher) : FALLBACK_HERO_BG;
+  // ✅ баннер берём из settings.banner (если есть)
+  const bannerUrl = useMemo(() => toAbsUrl(settings?.banner), [settings]);
+  const heroBg = useMemo(() => {
+    if (bannerUrl) return bannerUrl;
+    if (heroTeacher) return getTeacherImg(heroTeacher);
+    return FALLBACK_HERO_BG;
+  }, [bannerUrl, heroTeacher]);
+
+  // ✅ заголовок/описание из settings (если есть)
+  const heroTitle = useMemo(
+    () => str(settings?.title) || "Начните учиться сегодня — результат увидите уже через неделю",
+    [settings]
+  );
+  const heroDesc = useMemo(
+    () =>
+      str(settings?.description) ||
+      "Выбирайте курсы, смотрите уроки, сдавайте домашние задания и получайте обратную связь от преподавателя.",
+    [settings]
+  );
 
   return (
     <div className="min-h-screen bg-gray-50 overflow-x-hidden">
@@ -56,7 +162,11 @@ const HomePage = () => {
         className="relative overflow-hidden h-[100svh] min-h-screen w-screen"
         style={{ marginLeft: "calc(50% - 50vw)", marginRight: "calc(50% - 50vw)" }}
       >
-        <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${heroBg})` }} aria-hidden="true" />
+        <div
+          className="absolute inset-0 bg-cover bg-center"
+          style={{ backgroundImage: `url(${heroBg})` }}
+          aria-hidden="true"
+        />
         <div className="absolute inset-0 bg-gradient-to-b from-black/75 via-black/55 to-black/70" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_20%,rgba(99,102,241,.25),transparent_55%),radial-gradient(circle_at_80%_30%,rgba(168,85,247,.22),transparent_55%)]" />
 
@@ -68,12 +178,10 @@ const HomePage = () => {
             </div>
 
             <h1 className="mt-5 text-3xl sm:text-4xl lg:text-5xl font-semibold leading-tight">
-              Начните учиться сегодня — результат увидите уже через неделю
+              {heroTitle}
             </h1>
 
-            <p className="mt-4 text-white/85 text-base sm:text-lg max-w-2xl">
-              Выбирайте курсы, смотрите уроки, сдавайте домашние задания и получайте обратную связь от преподавателя.
-            </p>
+            <p className="mt-4 text-white/85 text-base sm:text-lg max-w-2xl">{heroDesc}</p>
 
             <div className="mt-7">
               <Link to="/courses" className="inline-block w-full sm:w-auto">
@@ -82,6 +190,10 @@ const HomePage = () => {
                 </Button>
               </Link>
             </div>
+
+            {settingsLoading ? (
+              <div className="mt-5 text-xs text-white/70">Загрузка настроек…</div>
+            ) : null}
           </div>
         </div>
 
@@ -117,7 +229,7 @@ const HomePage = () => {
                   <div className="font-semibold">Как получить доступ</div>
                   <ol className="mt-2 text-sm text-gray-700 list-decimal pl-5 space-y-1">
                     <li>Выбираете курс</li>
-                    <li>Пишете в WhatsApp</li>
+                    <li>Оплачиваешь.</li>
                     <li>Получаете токен и активируете в кабинете</li>
                   </ol>
                 </div>
@@ -142,24 +254,45 @@ const HomePage = () => {
           <h2 className="text-3xl mb-8">Категории курсов</h2>
 
           <div className="grid md:grid-cols-3 gap-6">
-            {categories.map((category) => (
-              <Link key={category.id} to={`/category/${category.id}`} className="block h-full">
-                <Card className="h-full min-h-[150px] hover:shadow-lg transition cursor-pointer">
-                  <div className="h-[120px] w-full bg-cover bg-center rounded-t-xl" style={{ backgroundImage: `url(${getCategoryImg(category)})` }} aria-hidden="true" />
-                  <div className="p-6 flex flex-col h-full">
-                    <div className="text-xl font-semibold leading-snug overflow-hidden" style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-                      {category.name}
+            {categories.map((category) => {
+              const img = getCategoryImg(category);
+
+              return (
+                <Link key={category.id} to={`/category/${category.id}`} className="block h-full">
+                  <Card className="h-full min-h-[150px] hover:shadow-lg transition cursor-pointer overflow-hidden rounded-2xl">
+                    <div className="h-[120px] w-full bg-gray-100">
+                      <img
+                        src={img}
+                        alt={category?.name || "Категория"}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                        onError={(e) => {
+                          e.currentTarget.src = FALLBACK_CAT_BG;
+                        }}
+                      />
                     </div>
 
-                    <div className="mt-2 text-gray-600 overflow-hidden" style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}>
-                      {category.description}
-                    </div>
+                    <div className="p-6 flex flex-col h-full">
+                      <div
+                        className="text-xl font-semibold leading-snug overflow-hidden"
+                        style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
+                      >
+                        {category.name}
+                      </div>
 
-                    <div className="mt-auto" />
-                  </div>
-                </Card>
-              </Link>
-            ))}
+                      <div
+                        className="mt-2 text-gray-600 overflow-hidden"
+                        style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}
+                      >
+                        {category.description}
+                      </div>
+
+                      <div className="mt-auto" />
+                    </div>
+                  </Card>
+                </Link>
+              );
+            })}
           </div>
         </section>
 
@@ -210,16 +343,39 @@ const HomePage = () => {
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {courses.slice(0, 3).map((course) => {
-              const teacher = course?.teacherId ? teacherById.get(course.teacherId) : course?.teacher || null;
+              const teacher = course?.teacherId
+                ? teacherById.get(course.teacherId)
+                : course?.instructor
+                ? teacherById.get(course.instructor)
+                : course?.teacher || null;
+
+              const courseImg = getCourseImg(course, teacher);
 
               return (
                 <Link key={course.id} to={`/course/${course.id}`} className="block h-full">
-                  <Card className="hover:shadow-lg transition cursor-pointer h-full flex flex-col">
-                    <div className="h-[140px] w-full bg-cover bg-center rounded-t-xl" style={{ backgroundImage: `url(${getTeacherImg(teacher)})` }} aria-hidden="true" />
+                  <Card className="hover:shadow-lg transition cursor-pointer h-full flex flex-col overflow-hidden rounded-2xl">
+                    <div className="h-[140px] w-full bg-gray-100">
+                      <img
+                        src={courseImg}
+                        alt={course?.title || "Курс"}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                        onError={(e) => {
+                          const tImg = getTeacherImg(teacher);
+                          if (tImg && e.currentTarget.src !== tImg) {
+                            e.currentTarget.src = tImg;
+                            return;
+                          }
+                          e.currentTarget.src = FALLBACK_COURSE_BG;
+                        }}
+                      />
+                    </div>
+
                     <div className="p-6 flex-1">
                       <div className="text-xl font-semibold">{course.title}</div>
                       <div className="text-gray-600 mt-2">{course.description}</div>
                     </div>
+
                     <div className="p-6 pt-0">
                       <Button variant="outline" className="w-full">
                         Подробнее

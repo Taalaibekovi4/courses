@@ -16,6 +16,10 @@ import {
   Video,
   Search,
   FolderPen,
+  Trash2,
+  Image as ImageIcon,
+  RefreshCw,
+  Link2,
 } from "lucide-react";
 
 import { useAuth } from "../contexts/AuthContext.jsx";
@@ -65,12 +69,192 @@ function StatusBadge({ status }) {
     return <Badge className="bg-green-600 text-white border-transparent">Принято</Badge>;
   if (s === "rework")
     return <Badge className="bg-orange-600 text-white border-transparent">На доработку</Badge>;
-  if (s === "declined")
-    return <Badge variant="destructive">Отклонено</Badge>;
-  if (s === "submitted" || !s)
-    return <Badge variant="secondary">На проверке</Badge>;
+  if (s === "declined") return <Badge variant="destructive">Отклонено</Badge>;
+  if (s === "submitted" || !s) return <Badge variant="secondary">На проверке</Badge>;
 
   return <Badge variant="outline">—</Badge>;
+}
+
+/* =========================
+   YouTube status badge
+   ========================= */
+function YouTubeStatusBadge({ status, error }) {
+  const s = normLow(status);
+
+  if (!s) return <Badge variant="outline">—</Badge>;
+  if (s === "ready" || s === "completed" || s === "success")
+    return <Badge className="bg-green-600 text-white border-transparent"> готово</Badge>;
+  if (s === "processing" || s === "pending")
+    return <Badge className="bg-orange-600 text-white border-transparent"> обработка</Badge>;
+  if (s === "uploading")
+    return <Badge className="bg-blue-600 text-white border-transparent"> загрузка</Badge>;
+  if (s === "error" || s === "failed")
+    return (
+      <Badge variant="destructive" title={norm(error) || ""}>
+         ошибка
+      </Badge>
+    );
+
+  return <Badge variant="secondary"> {status}</Badge>;
+}
+
+/* =========================
+   Scrollbar hide helper
+   ========================= */
+function GlobalNoScrollbarStyle() {
+  return (
+    <style>{`
+      .sb-no-scrollbar::-webkit-scrollbar{ width:0px; height:0px; }
+      .sb-no-scrollbar{ scrollbar-width:none; -ms-overflow-style:none; }
+    `}</style>
+  );
+}
+
+/* =========================
+   Body scroll lock (FIX!)
+   - предотвращает "залипание" overflow:hidden после 2-3 модалок/оверлеев
+   ========================= */
+let __sbLockCount = 0;
+let __sbPrevOverflow = "";
+let __sbPrevPadRight = "";
+
+function lockBodyScroll() {
+  try {
+    const body = document.body;
+    if (!body) return;
+
+    if (__sbLockCount === 0) {
+      __sbPrevOverflow = body.style.overflow || "";
+      __sbPrevPadRight = body.style.paddingRight || "";
+
+      const scrollBarWidth = window.innerWidth - document.documentElement.clientWidth;
+      if (scrollBarWidth > 0) body.style.paddingRight = `${scrollBarWidth}px`;
+
+      body.style.overflow = "hidden";
+    }
+    __sbLockCount += 1;
+  } catch (_) {}
+}
+
+function unlockBodyScroll() {
+  try {
+    const body = document.body;
+    if (!body) return;
+
+    __sbLockCount = Math.max(0, __sbLockCount - 1);
+    if (__sbLockCount === 0) {
+      body.style.overflow = __sbPrevOverflow;
+      body.style.paddingRight = __sbPrevPadRight;
+    }
+  } catch (_) {}
+}
+
+/* =========================
+   Video preview (teacher)
+   - mp4/webm/ogg/blob -> <video>
+   - youtube url/id -> <iframe>
+   ========================= */
+function extractYouTubeId(input) {
+  const v = norm(input);
+  if (!v) return "";
+
+  if (/^[a-zA-Z0-9_-]{6,}$/.test(v) && !v.includes("/") && !v.includes(".")) {
+    return v;
+  }
+
+  try {
+    const u = new URL(v);
+    const host = (u.hostname || "").toLowerCase();
+
+    if (host.includes("youtu.be")) {
+      const id = u.pathname.replace("/", "");
+      return id || "";
+    }
+
+    if (host.includes("youtube.com")) {
+      const id = u.searchParams.get("v");
+      if (id) return id;
+
+      const parts = u.pathname.split("/").filter(Boolean);
+      const idx = parts.findIndex((p) => p === "embed");
+      if (idx >= 0 && parts[idx + 1]) return parts[idx + 1];
+
+      const sidx = parts.findIndex((p) => p === "shorts");
+      if (sidx >= 0 && parts[sidx + 1]) return parts[sidx + 1];
+    }
+  } catch (_) {}
+
+  return "";
+}
+
+function isDirectVideoUrl(input) {
+  const v = normLow(input);
+  if (!v) return false;
+  if (v.startsWith("blob:")) return true;
+  return (
+    v.endsWith(".mp4") ||
+    v.endsWith(".webm") ||
+    v.endsWith(".ogg") ||
+    v.includes(".mp4?") ||
+    v.includes(".webm?") ||
+    v.includes(".ogg?")
+  );
+}
+
+function VideoPreview({ source, className = "", heightClass = "h-[160px]" }) {
+  const src = norm(source);
+  if (!src) {
+    return (
+      <div
+        className={`rounded-lg bg-gray-100 border flex items-center justify-center text-sm text-gray-600 ${heightClass} ${className}`}
+      >
+        Видео не выбрано
+      </div>
+    );
+  }
+
+  const ytId = extractYouTubeId(src);
+
+  if (ytId) {
+    const embed = `https://www.youtube-nocookie.com/embed/${ytId}?rel=0&modestbranding=1&playsinline=1`;
+    return (
+      <div className={`rounded-lg overflow-hidden bg-black border ${heightClass} ${className}`}>
+        <iframe
+          title="YouTube preview"
+          src={embed}
+          className={`w-full ${heightClass}`}
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+        />
+      </div>
+    );
+  }
+
+  if (
+    isDirectVideoUrl(src) ||
+    src.startsWith("http://") ||
+    src.startsWith("https://") ||
+    src.startsWith("blob:")
+  ) {
+    return (
+      <div className={`rounded-lg overflow-hidden bg-black border ${className}`}>
+        <video
+          src={src}
+          controls
+          className={`w-full ${heightClass} object-cover bg-black`}
+          preload="metadata"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`rounded-lg bg-gray-100 border flex items-center justify-center text-sm text-gray-600 ${heightClass} ${className}`}
+    >
+      Видео недоступно для предпросмотра
+    </div>
+  );
 }
 
 /* =========================
@@ -175,7 +359,7 @@ function SearchableSelectSingle({
             </div>
           </div>
 
-          <div className="max-h-64 overflow-auto">
+          <div className="max-h-64 overflow-auto sb-no-scrollbar">
             <button
               type="button"
               onClick={() => pick("")}
@@ -267,12 +451,7 @@ function LessonHomeworkMaterialsSingle({ file, existingUrl, onPick, onClear }) {
       {existingUrl ? (
         <div className="text-sm">
           Текущий файл:{" "}
-          <a
-            href={existingUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-blue-600 hover:underline break-all"
-          >
+          <a href={existingUrl} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline break-all">
             Открыть
           </a>
         </div>
@@ -282,7 +461,7 @@ function LessonHomeworkMaterialsSingle({ file, existingUrl, onPick, onClear }) {
         <div className="border rounded-lg p-3 bg-white flex items-start justify-between gap-3">
           <div className="text-sm break-all">📎 {file.name}</div>
           <Button variant="outline" size="sm" onClick={onClear}>
-            Удалить
+            Удалить файл
           </Button>
         </div>
       ) : (
@@ -316,20 +495,17 @@ function LessonHomeworkMaterialsSingle({ file, existingUrl, onPick, onClear }) {
 }
 
 /* =========================
-   Modal
+   Modal (FIX scroll lock)
    ========================= */
-function Modal({ title, isOpen, onClose, children }) {
+function Modal({ title, isOpen, onClose, children, closeOnOverlay = true }) {
   useEffect(() => {
-    if (!isOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
+    if (!isOpen) return undefined;
+    lockBodyScroll();
+    return () => unlockBodyScroll();
   }, [isOpen]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) return undefined;
     const onKey = (e) => {
       if (e.key === "Escape") onClose?.();
     };
@@ -341,7 +517,7 @@ function Modal({ title, isOpen, onClose, children }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4" role="dialog" aria-modal="true">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60" onClick={closeOnOverlay ? onClose : undefined} />
       <div className="relative z-10 w-full max-w-md bg-white rounded-2xl overflow-hidden shadow-xl border">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div className="font-semibold">{title}</div>
@@ -355,9 +531,31 @@ function Modal({ title, isOpen, onClose, children }) {
           </button>
         </div>
 
-        <div className="p-4 max-h-[85vh] overflow-auto transition-all">{children}</div>
+        <div className="p-4 max-h-[85vh] overflow-auto sb-no-scrollbar">{children}</div>
       </div>
     </div>
+  );
+}
+
+/* =========================
+   Confirm modal (no window.confirm)
+   ========================= */
+function ConfirmModal({ isOpen, title, description, onCancel, onConfirm, confirmText = "Удалить" }) {
+  return (
+    <Modal title={title} isOpen={isOpen} onClose={onCancel} closeOnOverlay={false}>
+      <div className="space-y-4">
+        <div className="text-sm text-gray-700 whitespace-pre-wrap">{description}</div>
+        <div className="flex gap-3">
+          <Button variant="destructive" className="w-full" onClick={onConfirm}>
+            <Trash2 className="w-4 h-4 mr-2" />
+            {confirmText}
+          </Button>
+          <Button variant="outline" className="w-full" onClick={onCancel}>
+            Отмена
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -382,7 +580,7 @@ function normalizeLessonTitle(l) {
   return l?.title ?? l?.lesson_title ?? "";
 }
 function normalizeLessonCourseId(l) {
-  const cid = l?.courseId ?? l?.course_id ?? l?.course ?? "";
+  const cid = l?.course ?? l?.courseId ?? l?.course_id ?? "";
   return String(cid || "");
 }
 
@@ -390,13 +588,7 @@ function normalizeHomework(hw) {
   const id = hw?.id ?? "";
   const courseId = hw?.course_id ?? hw?.courseId ?? hw?.course ?? "";
   const courseTitle = hw?.course_title ?? hw?.courseTitle ?? "";
-  const lessonId =
-    hw?.lesson ??
-    hw?.lesson_id ??
-    hw?.lessonId ??
-    hw?.lesson?.id ??
-    hw?.lesson?.pk ??
-    "";
+  const lessonId = hw?.lesson ?? hw?.lesson_id ?? hw?.lessonId ?? hw?.lesson?.id ?? "";
   const lessonTitle = hw?.lesson_title ?? hw?.lessonTitle ?? hw?.lesson?.title ?? "";
   const userId = hw?.user ?? hw?.userId ?? hw?.student ?? hw?.student_id ?? "";
   const studentUsername =
@@ -424,19 +616,14 @@ function normalizeHomework(hw) {
   };
 }
 
-function canPlayVideo(url) {
-  const u = norm(url);
-  if (!u) return false;
-  if (u.startsWith("blob:")) return true;
-  if (u.startsWith("http://") || u.startsWith("https://")) return true;
-  return false;
-}
-
 function isTeacherCanReview(status) {
   const s = normLow(status);
   return s === "submitted" || !s || s === "rework";
 }
 
+/* =========================
+   Teacher Dashboard
+   ========================= */
 export function TeacherDashboard() {
   const { user } = useAuth();
   const data = useData();
@@ -456,65 +643,94 @@ export function TeacherDashboard() {
 
     addLesson,
     updateLesson,
+    deleteLesson,
+
     addCourse,
     updateCourse,
+    deleteCourse,
+
+    youtubeProjectStatus,
+    youtubeProjectOauthStart,
+    youtubeRefreshLessonStatus,
+    youtubeRefreshStatusBatch,
 
     loading,
     error,
   } = data || {};
 
   const [tab, setTab] = useState("homework");
-  const [homeworkFilter, setHomeworkFilter] = useState("all"); // all | submitted | accepted
+  const [homeworkFilter, setHomeworkFilter] = useState("all");
 
   const [comments, setComments] = useState({});
   const [expandedStudents, setExpandedStudents] = useState({});
   const [expandedArchiveStudents, setExpandedArchiveStudents] = useState({});
   const [expandedCourse, setExpandedCourse] = useState(null);
 
-  // локальный архив
   const [archivedIds, setArchivedIds] = useState(() => new Set());
 
-  // MODAL: add course
+  // YouTube project info
+  const [ytProject, setYtProject] = useState({ loading: false, data: null });
+
+  // NEW COURSE modal
   const [isAddCourseOpen, setIsAddCourseOpen] = useState(false);
   const [newCourseTitle, setNewCourseTitle] = useState("");
   const [newCourseCategoryId, setNewCourseCategoryId] = useState("");
+  const [newCourseDescription, setNewCourseDescription] = useState("");
+  const [newCoursePhoto, setNewCoursePhoto] = useState(null);
 
-  // MODAL: edit course
+  // EDIT COURSE modal
   const [isEditCourseOpen, setIsEditCourseOpen] = useState(false);
   const [editCourseId, setEditCourseId] = useState("");
   const [editCourseForm, setEditCourseForm] = useState({
     title: "",
     description: "",
     categoryId: "",
+    photoFile: null,
+    photoUrl: "",
   });
 
-  // EDIT LESSON
-  const [editLessonId, setEditLessonId] = useState(null);
-  const [editForm, setEditForm] = useState({
+  // EDIT LESSON modal
+  const [isEditLessonOpen, setIsEditLessonOpen] = useState(false);
+  const [editLessonId, setEditLessonId] = useState("");
+  const [editLessonForm, setEditLessonForm] = useState({
     title: "",
     description: "",
-    videoInput: "",
+    order: "",
     videoFile: null,
     videoPreviewUrl: "",
+    backendVideo: "",
+    youtube_status: "",
+    youtube_error: "",
     homeworkDescription: "",
     homeworkFile: null,
     homeworkExistingFileUrl: "",
   });
 
-  // ADD LESSON
+  // ADD LESSON form
   const [addForm, setAddForm] = useState({
     courseId: "",
     title: "",
     description: "",
-    videoInput: "",
+    order: "",
     videoFile: null,
     videoPreviewUrl: "",
     homeworkDescription: "",
     homeworkFile: null,
   });
 
-  // ✅ большой оверлей загрузки
   const [isAddingLesson, setIsAddingLesson] = useState(false);
+
+  // confirms
+  const [confirmDeleteLesson, setConfirmDeleteLesson] = useState({
+    open: false,
+    lessonId: "",
+    lessonTitle: "",
+  });
+  const [confirmDeleteCourse, setConfirmDeleteCourse] = useState({
+    open: false,
+    courseId: "",
+    courseTitle: "",
+  });
 
   useEffect(() => {
     if (!user?.id) return;
@@ -535,20 +751,28 @@ export function TeacherDashboard() {
   }, [user?.id]);
 
   useEffect(() => {
+    // чистим blob urls на размонтаже
     return () => {
       if (addForm.videoPreviewUrl?.startsWith("blob:")) {
         try {
           URL.revokeObjectURL(addForm.videoPreviewUrl);
         } catch (_) {}
       }
-      if (editForm.videoPreviewUrl?.startsWith("blob:")) {
+      if (editLessonForm.videoPreviewUrl?.startsWith("blob:")) {
         try {
-          URL.revokeObjectURL(editForm.videoPreviewUrl);
+          URL.revokeObjectURL(editLessonForm.videoPreviewUrl);
         } catch (_) {}
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 🔥 ВАЖНО: пока идет загрузка видео — лочим body (и потом отпускаем)
+  useEffect(() => {
+    if (!isAddingLesson) return undefined;
+    lockBodyScroll();
+    return () => unlockBodyScroll();
+  }, [isAddingLesson]);
 
   if (!user) return null;
 
@@ -572,7 +796,8 @@ export function TeacherDashboard() {
         c?.teacher_id != null ||
         c?.teacher != null ||
         c?.teacher?.id != null ||
-        c?.owner_id != null
+        c?.owner_id != null ||
+        c?.instructor != null
     );
     if (!anyTeacherField) return list;
 
@@ -583,6 +808,7 @@ export function TeacherDashboard() {
         (typeof c?.teacher === "number" || typeof c?.teacher === "string" ? c.teacher : null) ??
         c?.teacher?.id ??
         c?.owner_id ??
+        c?.instructor ??
         null;
       return String(t ?? "") === uid;
     });
@@ -614,7 +840,9 @@ export function TeacherDashboard() {
 
   const filteredActive = useMemo(() => {
     if (homeworkFilter === "submitted")
-      return teacherHomeworksActive.filter((hw) => normLow(hw.status) === "submitted" || !normLow(hw.status));
+      return teacherHomeworksActive.filter(
+        (hw) => normLow(hw.status) === "submitted" || !normLow(hw.status)
+      );
     if (homeworkFilter === "accepted")
       return teacherHomeworksActive.filter((hw) => normLow(hw.status) === "accepted");
     return teacherHomeworksActive;
@@ -728,11 +956,112 @@ export function TeacherDashboard() {
     setExpandedArchiveStudents((prev) => ({ ...prev, [studentId]: !prev[studentId] }));
 
   /* =========================
+     YouTube helpers
+     ========================= */
+  const fetchYouTubeProjectStatus = useCallback(async () => {
+    if (!youtubeProjectStatus) return;
+    setYtProject((p) => ({ ...p, loading: true }));
+    try {
+      const res = await youtubeProjectStatus();
+      if (res?.ok === false) {
+        toast.error(res?.error || "Не удалось получить статус YouTube");
+        setYtProject({ loading: false, data: null });
+        return;
+      }
+      setYtProject({ loading: false, data: res?.data ?? res ?? null });
+    } catch (e) {
+      console.error(e);
+      setYtProject({ loading: false, data: null });
+      toast.error("Ошибка статуса YouTube");
+    }
+  }, [youtubeProjectStatus]);
+
+  const startYouTubeOAuth = useCallback(async () => {
+    if (!youtubeProjectOauthStart) {
+      toast.error("youtubeProjectOauthStart не подключён");
+      return;
+    }
+    try {
+      const res = await youtubeProjectOauthStart();
+      if (res?.ok === false) {
+        toast.error(res?.error || "Не удалось начать OAuth");
+        return;
+      }
+
+      const url =
+        res?.data?.auth_url ||
+        res?.data?.url ||
+        res?.auth_url ||
+        res?.url ||
+        res?.data?.authorization_url ||
+        "";
+
+      if (!url) {
+        toast.error("OAuth URL не вернулся с сервера");
+        return;
+      }
+
+      window.open(url, "_blank", "noopener,noreferrer");
+      toast.success("Открыл окно авторизации YouTube");
+    } catch (e) {
+      console.error(e);
+      toast.error("Ошибка OAuth");
+    }
+  }, [youtubeProjectOauthStart]);
+
+  const refreshAllLessonStatuses = useCallback(async () => {
+    if (!youtubeRefreshStatusBatch) {
+      toast.error("youtubeRefreshStatusBatch не подключён");
+      return;
+    }
+    try {
+      const ids = (Array.isArray(normalizedLessons) ? normalizedLessons : [])
+        .map((l) => normalizeLessonId(l))
+        .filter(Boolean);
+
+      const res = await youtubeRefreshStatusBatch(ids);
+      if (res?.ok === false) {
+        toast.error(res?.error || "Не удалось обновить статусы");
+        return;
+      }
+      toast.success("Статусы обновлены");
+      await loadTeacherLessons?.();
+    } catch (e) {
+      console.error(e);
+      toast.error("Ошибка обновления статусов");
+    }
+  }, [youtubeRefreshStatusBatch, normalizedLessons, loadTeacherLessons]);
+
+  const refreshOneLessonStatus = useCallback(
+    async (lessonId) => {
+      if (!youtubeRefreshLessonStatus) {
+        toast.error("youtubeRefreshLessonStatus не подключён");
+        return;
+      }
+      try {
+        const res = await youtubeRefreshLessonStatus(lessonId);
+        if (res?.ok === false) {
+          toast.error(res?.error || "Не удалось обновить статус");
+          return;
+        }
+        toast.success("Статус обновлён");
+        await loadTeacherLessons?.();
+      } catch (e) {
+        console.error(e);
+        toast.error("Ошибка обновления статуса");
+      }
+    },
+    [youtubeRefreshLessonStatus, loadTeacherLessons]
+  );
+
+  /* =========================
      Courses
      ========================= */
   function openAddCourse() {
     setNewCourseTitle("");
     setNewCourseCategoryId("");
+    setNewCourseDescription("");
+    setNewCoursePhoto(null);
     setIsAddCourseOpen(true);
   }
 
@@ -750,11 +1079,9 @@ export function TeacherDashboard() {
     try {
       const payload = {
         title,
-        name: title,
-        description: "",
-        categoryId: newCourseCategoryId || undefined,
-        category_id: newCourseCategoryId || undefined,
+        description: norm(newCourseDescription),
         category: newCourseCategoryId || undefined,
+        photo: newCoursePhoto || undefined,
       };
 
       const res = await addCourse(payload);
@@ -765,7 +1092,7 @@ export function TeacherDashboard() {
           : res?.id ?? res?.data?.id ?? res?.course_id ?? null;
 
       if (!cid) {
-        toast.error("Не удалось добавить курс");
+        toast.error(res?.error || "Не удалось добавить курс");
         return;
       }
 
@@ -784,11 +1111,15 @@ export function TeacherDashboard() {
   function openEditCourse(course) {
     const id = normalizeCourseId(course);
     setEditCourseId(id);
+
     setEditCourseForm({
       title: normalizeCourseTitle(course),
       description: course?.description ?? "",
       categoryId: String(course?.categoryId ?? course?.category_id ?? course?.category ?? ""),
+      photoFile: null,
+      photoUrl: course?.photo || "",
     });
+
     setIsEditCourseOpen(true);
   }
 
@@ -808,11 +1139,9 @@ export function TeacherDashboard() {
     try {
       const payload = {
         title,
-        name: title,
-        description: editCourseForm.description ?? "",
-        categoryId: editCourseForm.categoryId || undefined,
-        category_id: editCourseForm.categoryId || undefined,
+        description: norm(editCourseForm.description),
         category: editCourseForm.categoryId || undefined,
+        photo: editCourseForm.photoFile || undefined,
       };
 
       const res = await updateCourse(editCourseId, payload);
@@ -830,54 +1159,90 @@ export function TeacherDashboard() {
     }
   }
 
-  /* =========================
-     Lessons
-     ========================= */
-  function openEditLesson(lesson) {
-    const id = normalizeLessonId(lesson);
-    setEditLessonId(id);
-
-    const backendVideo = norm(
-      lesson?.youtubeVideoId ??
-        lesson?.youtube_video_id ??
-        lesson?.videoUrl ??
-        lesson?.video_url ??
-        ""
-    );
-
-    const backendHomeworkFileUrl = norm(
-      lesson?.homeworkFile ??
-        lesson?.homework_file ??
-        lesson?.homeworkFileUrl ??
-        ""
-    );
-
-    setEditForm({
-      title: normalizeLessonTitle(lesson),
-      description: lesson?.description ?? "",
-      videoInput: backendVideo,
-      videoFile: null,
-      videoPreviewUrl: "",
-      homeworkDescription: lesson?.homeworkDescription ?? lesson?.homework_description ?? "",
-      homeworkFile: null,
-      homeworkExistingFileUrl: backendHomeworkFileUrl,
+  function askDeleteCourse(course) {
+    const cid = normalizeCourseId(course);
+    setConfirmDeleteCourse({
+      open: true,
+      courseId: cid,
+      courseTitle: normalizeCourseTitle(course) || "Курс",
     });
   }
 
-  function cancelEditLesson() {
-    if (editForm.videoPreviewUrl?.startsWith("blob:")) {
+  async function confirmDeleteCourseNow() {
+    const { courseId } = confirmDeleteCourse;
+    if (!courseId) return;
+
+    if (!deleteCourse) {
+      toast.error("deleteCourse не подключён в DataContext");
+      return;
+    }
+
+    try {
+      const res = await deleteCourse(courseId);
+      if (res?.ok === false) {
+        toast.error(res?.error || "Не удалось удалить курс");
+        return;
+      }
+      toast.success("Курс удалён");
+      setConfirmDeleteCourse({ open: false, courseId: "", courseTitle: "" });
+      setIsEditCourseOpen(false);
+      await loadPublic?.();
+
+      setExpandedCourse((prev) => (String(prev) === String(courseId) ? null : prev));
+    } catch (e) {
+      console.error(e);
+      toast.error("Ошибка удаления курса");
+    }
+  }
+
+  /* =========================
+     Lessons
+     ========================= */
+  function openEditLessonModal(lesson) {
+    const id = normalizeLessonId(lesson);
+    const backendVideo = norm(lesson?.video_url || lesson?.youtube_video_id || "");
+    const backendHomeworkFileUrl = norm(lesson?.homework_file || "");
+
+    if (editLessonForm.videoPreviewUrl?.startsWith("blob:")) {
       try {
-        URL.revokeObjectURL(editForm.videoPreviewUrl);
+        URL.revokeObjectURL(editLessonForm.videoPreviewUrl);
       } catch (_) {}
     }
 
-    setEditLessonId(null);
-    setEditForm({
-      title: "",
-      description: "",
-      videoInput: "",
+    setEditLessonId(id);
+    setEditLessonForm({
+      title: normalizeLessonTitle(lesson),
+      description: lesson?.description ?? "",
+      order: String(lesson?.order ?? ""),
       videoFile: null,
       videoPreviewUrl: "",
+      backendVideo,
+      youtube_status: lesson?.youtube_status ?? lesson?.youtubeStatus ?? "",
+      youtube_error: lesson?.youtube_error ?? lesson?.youtubeError ?? "",
+      homeworkDescription: lesson?.homework_description ?? "",
+      homeworkFile: null,
+      homeworkExistingFileUrl: backendHomeworkFileUrl,
+    });
+    setIsEditLessonOpen(true);
+  }
+
+  function closeEditLessonModal() {
+    if (editLessonForm.videoPreviewUrl?.startsWith("blob:")) {
+      try {
+        URL.revokeObjectURL(editLessonForm.videoPreviewUrl);
+      } catch (_) {}
+    }
+    setIsEditLessonOpen(false);
+    setEditLessonId("");
+    setEditLessonForm({
+      title: "",
+      description: "",
+      order: "",
+      videoFile: null,
+      videoPreviewUrl: "",
+      backendVideo: "",
+      youtube_status: "",
+      youtube_error: "",
       homeworkDescription: "",
       homeworkFile: null,
       homeworkExistingFileUrl: "",
@@ -886,68 +1251,36 @@ export function TeacherDashboard() {
 
   function onPickEditVideo(file) {
     if (!file) return;
-    if (editForm.videoPreviewUrl?.startsWith("blob:")) {
+
+    if (editLessonForm.videoPreviewUrl?.startsWith("blob:")) {
       try {
-        URL.revokeObjectURL(editForm.videoPreviewUrl);
+        URL.revokeObjectURL(editLessonForm.videoPreviewUrl);
       } catch (_) {}
     }
+
     const url = URL.createObjectURL(file);
-    setEditForm((p) => ({ ...p, videoFile: file, videoPreviewUrl: url }));
-    toast.success("Видео выбрано (превью)");
+    setEditLessonForm((p) => ({
+      ...p,
+      videoFile: file,
+      videoPreviewUrl: url,
+      youtube_status: "uploading",
+      youtube_error: "",
+    }));
+    toast.success("Видео выбрано");
   }
 
   function onPickAddVideo(file) {
     if (!file) return;
+
     if (addForm.videoPreviewUrl?.startsWith("blob:")) {
       try {
         URL.revokeObjectURL(addForm.videoPreviewUrl);
       } catch (_) {}
     }
+
     const url = URL.createObjectURL(file);
     setAddForm((p) => ({ ...p, videoFile: file, videoPreviewUrl: url }));
-    toast.success("Видео выбрано (превью)");
-  }
-
-  function buildLessonPayload(form, { courseId }) {
-    const payload = {};
-
-    const title = norm(form.title);
-    const description = norm(form.description);
-    const videoInput = norm(form.videoInput);
-    const homeworkDescription = norm(form.homeworkDescription);
-
-    if (courseId) {
-      payload.course = String(courseId);
-      payload.course_id = String(courseId);
-      payload.courseId = String(courseId);
-    }
-
-    if (title) payload.title = title;
-    if (description) payload.description = description;
-
-    if (videoInput) {
-      payload.youtube_video_id = videoInput;
-      payload.youtubeVideoId = videoInput;
-      payload.video_url = videoInput;
-      payload.videoUrl = videoInput;
-    }
-
-    if (homeworkDescription) {
-      payload.homework_description = homeworkDescription;
-      payload.homeworkDescription = homeworkDescription;
-    }
-
-    if (form.videoFile) {
-      payload.video_file = form.videoFile;
-      payload.videoFile = form.videoFile;
-    }
-
-    if (form.homeworkFile) {
-      payload.homework_file = form.homeworkFile;
-      payload.homeworkFile = form.homeworkFile;
-    }
-
-    return payload;
+    toast.success("Видео выбрано");
   }
 
   async function saveEditLesson() {
@@ -957,28 +1290,77 @@ export function TeacherDashboard() {
       return;
     }
 
-    const videoInput = norm(editForm.videoInput);
-    const hasVideo = !!videoInput || !!editForm.videoFile || !!editForm.videoPreviewUrl;
+    const hasVideo = !!editLessonForm.videoFile || !!editLessonForm.backendVideo;
     if (!hasVideo) {
-      toast.error("Укажите ссылку/ID или выберите видео");
+      toast.error("Урок без видео нельзя сохранить");
       return;
     }
 
-    try {
-      const payload = buildLessonPayload(editForm, { courseId: null });
-      const res = await updateLesson(editLessonId, payload);
+    const orderNum = Number(editLessonForm.order);
+    const orderValue =
+      String(editLessonForm.order).trim() === "" || !Number.isFinite(orderNum) ? undefined : orderNum;
 
+    try {
+      const payload = {
+        title: norm(editLessonForm.title),
+        description: norm(editLessonForm.description),
+        order: orderValue, // ✅ order
+        homework_description: norm(editLessonForm.homeworkDescription),
+        ...(editLessonForm.videoFile ? { video_file: editLessonForm.videoFile } : {}),
+        ...(editLessonForm.homeworkFile ? { homework_file: editLessonForm.homeworkFile } : {}),
+      };
+
+      const res = await updateLesson(editLessonId, payload);
       if (res?.ok === false) {
         toast.error(res?.error || "Не удалось обновить урок");
         return;
       }
 
       toast.success("Урок обновлён");
-      cancelEditLesson();
+      closeEditLessonModal();
       await loadTeacherLessons?.();
+
+      // ✅ после сохранения — дергаем refresh-status (если есть)
+      if (youtubeRefreshLessonStatus) {
+        await youtubeRefreshLessonStatus(editLessonId);
+        await loadTeacherLessons?.();
+      }
     } catch (e) {
       console.error(e);
       toast.error("Ошибка обновления урока");
+    }
+  }
+
+  function askDeleteLesson(lessonId, lessonTitle) {
+    setConfirmDeleteLesson({
+      open: true,
+      lessonId: String(lessonId || ""),
+      lessonTitle: String(lessonTitle || "Урок"),
+    });
+  }
+
+  async function confirmDeleteLessonNow() {
+    const { lessonId } = confirmDeleteLesson;
+    if (!lessonId) return;
+
+    if (!deleteLesson) {
+      toast.error("deleteLesson не подключён в DataContext");
+      return;
+    }
+
+    try {
+      const res = await deleteLesson(lessonId);
+      if (res?.ok === false) {
+        toast.error(res?.error || "Не удалось удалить урок");
+        return;
+      }
+      toast.success("Урок удалён");
+      setConfirmDeleteLesson({ open: false, lessonId: "", lessonTitle: "" });
+      closeEditLessonModal();
+      await loadTeacherLessons?.();
+    } catch (e) {
+      console.error(e);
+      toast.error("Ошибка удаления урока");
     }
   }
 
@@ -995,20 +1377,33 @@ export function TeacherDashboard() {
       return;
     }
 
-    const videoInput = norm(addForm.videoInput);
-    const hasVideo = !!videoInput || !!addForm.videoFile || !!addForm.videoPreviewUrl;
-    if (!hasVideo) {
-      toast.error("Укажите ссылку/ID или выберите видео");
+    if (!addForm.videoFile) {
+      toast.error("Выберите видео файл");
       return;
     }
 
+    const title = norm(addForm.title);
+    if (!title) {
+      toast.error("Введите название урока");
+      return;
+    }
+
+    const orderNum = Number(addForm.order);
+    const orderValue = String(addForm.order).trim() === "" || !Number.isFinite(orderNum) ? undefined : orderNum;
+
     setIsAddingLesson(true);
     try {
-      const payload = buildLessonPayload(addForm, { courseId: cid });
+      const payload = {
+        course: Number(cid),
+        title,
+        description: norm(addForm.description),
+        order: orderValue, // ✅ order
+        video_file: addForm.videoFile,
+        homework_description: norm(addForm.homeworkDescription),
+        ...(addForm.homeworkFile ? { homework_file: addForm.homeworkFile } : {}),
+      };
 
-      // ✅ ВАЖНО: пытаемся убрать axios timeout (если addLesson прокидывает config во внутрь)
       const res = await addLesson(payload, { timeout: 0 });
-
       if (res?.ok === false) {
         toast.error(res?.error || "Не удалось добавить урок");
         return;
@@ -1020,7 +1415,7 @@ export function TeacherDashboard() {
         courseId: cid,
         title: "",
         description: "",
-        videoInput: "",
+        order: "",
         videoFile: null,
         videoPreviewUrl: "",
         homeworkDescription: "",
@@ -1030,6 +1425,15 @@ export function TeacherDashboard() {
       setExpandedCourse(cid);
       setTab("courses");
       await loadTeacherLessons?.();
+
+      // ✅ после добавления — дергаем batch refresh (или одиночный если получится)
+      if (youtubeRefreshStatusBatch) {
+        const ids = (Array.isArray(normalizedLessons) ? normalizedLessons : [])
+          .map((l) => normalizeLessonId(l))
+          .filter(Boolean);
+        await youtubeRefreshStatusBatch(ids);
+        await loadTeacherLessons?.();
+      }
     } catch (e) {
       console.error(e);
       toast.error("Ошибка добавления урока");
@@ -1065,15 +1469,43 @@ export function TeacherDashboard() {
   const lessonsByCourse = useCallback(
     (courseId) => {
       const cid = String(courseId);
-      return normalizedLessons.filter((l) => normalizeLessonCourseId(l) === cid);
+      const arr = normalizedLessons.filter((l) => normalizeLessonCourseId(l) === cid);
+      // ✅ сортировка по order
+      return [...arr].sort((a, b) => {
+        const ao = Number(a?.order);
+        const bo = Number(b?.order);
+        const aHas = Number.isFinite(ao);
+        const bHas = Number.isFinite(bo);
+        if (aHas && bHas) return ao - bo;
+        if (aHas && !bHas) return -1;
+        if (!aHas && bHas) return 1;
+        return normalizeLessonId(a).localeCompare(normalizeLessonId(b));
+      });
     },
     [normalizedLessons]
   );
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <GlobalNoScrollbarStyle />
+
       <div className="container mx-auto px-4 py-8">
-        <h1 className="text-3xl mb-8">Кабинет преподавателя</h1>
+        <div className="flex items-start justify-between gap-4 mb-8">
+          <h1 className="text-3xl">Кабинет преподавателя</h1>
+        </div>
+
+        {ytProject.data ? (
+          <Card className="mb-6">
+            <CardContent className="py-4">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <Badge variant="secondary">YouTube project</Badge>
+                <span className="text-gray-700">
+                  {typeof ytProject.data === "string" ? ytProject.data : JSON.stringify(ytProject.data)}
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {isAnyLoading ? (
           <Card className="mb-6">
@@ -1229,7 +1661,9 @@ export function TeacherDashboard() {
 
                                 {hw.teacherComment ? (
                                   <div className="mt-4 p-3 bg-blue-50 rounded">
-                                    <div className="text-sm font-medium mb-1">Комментарий преподавателя:</div>
+                                    <div className="text-sm font-medium mb-1">
+                                      Комментарий преподавателя:
+                                    </div>
                                     <div className="text-sm whitespace-pre-wrap">{hw.teacherComment}</div>
                                   </div>
                                 ) : null}
@@ -1259,18 +1693,14 @@ export function TeacherDashboard() {
                                         На доработку
                                       </Button>
 
-                                      <Button onClick={() => handleReview(hw.id, "declined")} variant="destructive">
+                                      <Button
+                                        onClick={() => handleReview(hw.id, "declined")}
+                                        variant="destructive"
+                                      >
                                         <XCircle className="w-4 h-4 mr-2" />
                                         Отклонить
                                       </Button>
                                     </div>
-
-                                    {normLow(hw.status) === "rework" ? (
-                                      <div className="text-xs text-gray-600">
-                                        Если студент исправит и отправит снова — статус должен вернуться в{" "}
-                                        <b>На проверке</b>.
-                                      </div>
-                                    ) : null}
                                   </div>
                                 ) : null}
 
@@ -1296,7 +1726,12 @@ export function TeacherDashboard() {
 
           {/* Мои курсы */}
           <TabsContent value="courses" className="space-y-4">
-            <div className="flex justify-end">
+            <div className="flex items-center justify-between gap-3">
+              <Button type="button" variant="outline" onClick={refreshAllLessonStatuses}>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Обновить статусы
+              </Button>
+
               <Button type="button" variant="outline" onClick={openAddCourse}>
                 <Plus className="w-4 h-4 mr-2" />
                 Новый курс
@@ -1324,7 +1759,9 @@ export function TeacherDashboard() {
                           className="flex-1 text-left"
                           type="button"
                         >
-                          <CardTitle className="text-xl">{normalizeCourseTitle(course) || "Курс"}</CardTitle>
+                          <CardTitle className="text-xl">
+                            {normalizeCourseTitle(course) || "Курс"}
+                          </CardTitle>
                           <p className="text-sm text-gray-600 mt-2">
                             {(normalizeCategoryName(course) || "Без категории") +
                               " • " +
@@ -1337,9 +1774,24 @@ export function TeacherDashboard() {
                         </button>
 
                         <div className="flex items-center gap-2">
-                          <Button type="button" variant="outline" size="sm" onClick={() => openEditCourse(course)}>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openEditCourse(course)}
+                          >
                             <FolderPen className="w-4 h-4 mr-2" />
                             Курс
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => askDeleteCourse(course)}
+                          >
+                            <Trash2 className="w-4 h-4 mr-2" />
+                            Удалить
                           </Button>
 
                           <button
@@ -1359,128 +1811,44 @@ export function TeacherDashboard() {
                         <div className="grid md:grid-cols-2 gap-4">
                           {courseLessons.map((l, idx) => {
                             const lid = normalizeLessonId(l);
-                            const isEditing = editLessonId === lid;
-
-                            const previewUrl = isEditing ? editForm.videoPreviewUrl : "";
-                            const showUrl = isEditing
-                              ? norm(editForm.videoInput)
-                              : norm(
-                                  l?.youtubeVideoId ?? l?.youtube_video_id ?? l?.videoUrl ?? l?.video_url ?? ""
-                                );
-
-                            const orderLabel = l?.order ? l.order : idx + 1;
+                            const backendVideo = norm(l?.video_url || l?.youtube_video_id || "");
+                            const orderLabel = Number.isFinite(Number(l?.order)) ? l.order : idx + 1;
 
                             return (
                               <div key={lid} className="border rounded-lg p-4 bg-white">
                                 <div className="flex items-start justify-between gap-3">
-                                  <div className="font-semibold">
-                                    {orderLabel}. {normalizeLessonTitle(l) || "Урок"}
-                                  </div>
-                                  <Button variant="outline" size="sm" onClick={() => openEditLesson(l)}>
-                                    <Pencil className="w-4 h-4 mr-2" />
-                                    Редактировать
-                                  </Button>
-                                </div>
-
-                                {previewUrl ? (
-                                  <div className="mt-3 rounded overflow-hidden bg-black">
-                                    {canPlayVideo(previewUrl) ? (
-                                      <video
-                                        src={previewUrl}
-                                        controls
-                                        className="w-full h-[140px] object-cover bg-black"
-                                        preload="metadata"
-                                      />
-                                    ) : (
-                                      <div className="h-[140px] flex items-center justify-center text-white/70 text-sm">
-                                        Видео выбрано, но не воспроизводится
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : null}
-
-                                {showUrl ? (
-                                  <div className="mt-3 text-xs text-gray-600 break-all">
-                                    Видео (URL/ID): <span className="text-gray-900">{showUrl}</span>
-                                  </div>
-                                ) : null}
-
-                                {l?.description ? <p className="text-sm text-gray-700 mt-3">{l.description}</p> : null}
-
-                                {isEditing && (
-                                  <div className="mt-4 space-y-3">
-                                    <div className="space-y-1">
-                                      <label className="text-sm">Название</label>
-                                      <Input
-                                        value={editForm.title}
-                                        onChange={(e) => setEditForm((p) => ({ ...p, title: e.target.value }))}
+                                  <div className="space-y-2">
+                                    <div className="font-semibold flex items-center gap-2 flex-wrap">
+                                      <span>
+                                        {orderLabel}. {normalizeLessonTitle(l) || "Урок"}
+                                      </span>
+                                      <YouTubeStatusBadge
+                                        status={l?.youtube_status ?? l?.youtubeStatus}
+                                        error={l?.youtube_error ?? l?.youtubeError}
                                       />
                                     </div>
 
-                                    <div className="space-y-1">
-                                      <label className="text-sm">Описание</label>
-                                      <Textarea
-                                        rows={3}
-                                        value={editForm.description}
-                                        onChange={(e) => setEditForm((p) => ({ ...p, description: e.target.value }))}
-                                      />
-                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <Button variant="outline" size="sm" onClick={() => refreshOneLessonStatus(lid)}>
+                                        <RefreshCw className="w-4 h-4 mr-2" />
+                                        Статус
+                                      </Button>
 
-                                    <div className="space-y-2">
-                                      <label className="text-sm">Ссылка или ID</label>
-                                      <Input
-                                        value={editForm.videoInput}
-                                        onChange={(e) => setEditForm((p) => ({ ...p, videoInput: e.target.value }))}
-                                        placeholder="https://youtu.be/... или dQw4w9WgXcQ"
-                                      />
-                                    </div>
-
-                                    <div className="space-y-2">
-                                      <label className="text-sm">Видео файл (превью)</label>
-                                      <label className="block">
-                                        <input
-                                          type="file"
-                                          accept="video/*"
-                                          className="hidden"
-                                          onChange={(e) => {
-                                            const f = e.target.files?.[0] || null;
-                                            if (f) onPickEditVideo(f);
-                                            e.target.value = "";
-                                          }}
-                                        />
-                                        <div className="w-full border rounded-md px-3 py-2 bg-white hover:bg-gray-50 transition flex items-center gap-2 cursor-pointer">
-                                          <Video className="w-4 h-4 text-gray-600" />
-                                          <span className="text-sm text-gray-700">Выбрать видео</span>
-                                        </div>
-                                      </label>
-                                    </div>
-
-                                    <div className="space-y-1">
-                                      <label className="text-sm">Домашнее задание (опционально)</label>
-                                      <Textarea
-                                        rows={2}
-                                        value={editForm.homeworkDescription}
-                                        onChange={(e) =>
-                                          setEditForm((p) => ({ ...p, homeworkDescription: e.target.value }))
-                                        }
-                                      />
-                                    </div>
-
-                                    <LessonHomeworkMaterialsSingle
-                                      file={editForm.homeworkFile}
-                                      existingUrl={editForm.homeworkExistingFileUrl}
-                                      onPick={(f) => setEditForm((p) => ({ ...p, homeworkFile: f }))}
-                                      onClear={() => setEditForm((p) => ({ ...p, homeworkFile: null }))}
-                                    />
-
-                                    <div className="flex gap-3">
-                                      <Button onClick={saveEditLesson}>Сохранить</Button>
-                                      <Button variant="outline" onClick={cancelEditLesson}>
-                                        Отмена
+                                      <Button variant="outline" size="sm" onClick={() => openEditLessonModal(l)}>
+                                        <Pencil className="w-4 h-4 mr-2" />
+                                        Редактировать
                                       </Button>
                                     </div>
                                   </div>
-                                )}
+                                </div>
+
+                                <div className="mt-3">
+                                  <VideoPreview source={backendVideo} heightClass="h-[140px]" />
+                                </div>
+
+                                {l?.description ? (
+                                  <p className="text-sm text-gray-700 mt-3">{l.description}</p>
+                                ) : null}
                               </div>
                             );
                           })}
@@ -1530,58 +1898,56 @@ export function TeacherDashboard() {
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-sm">Ссылка или ID</label>
-                    <Input
-                      value={addForm.videoInput}
-                      onChange={(e) => setAddForm((p) => ({ ...p, videoInput: e.target.value }))}
-                      placeholder="https://youtu.be/... или dQw4w9WgXcQ"
-                      disabled={isAddingLesson}
-                    />
-
-                    <div className="space-y-2">
-                      <label className="text-sm">Видео файл (превью)</label>
-                      <label className="block">
-                        <input
-                          type="file"
-                          accept="video/*"
-                          className="hidden"
-                          disabled={isAddingLesson}
-                          onChange={(e) => {
-                            const f = e.target.files?.[0] || null;
-                            if (f) onPickAddVideo(f);
-                            e.target.value = "";
-                          }}
-                        />
-                        <div className="w-full border rounded-md px-3 py-2 bg-white hover:bg-gray-50 transition flex items-center gap-2 cursor-pointer">
-                          <Video className="w-4 h-4 text-gray-600" />
-                          <span className="text-sm text-gray-700">Выбрать видео</span>
-                        </div>
-                      </label>
-                    </div>
+                    <label className="text-sm">Видео файл</label>
+                    <label className="block">
+                      <input
+                        type="file"
+                        accept="video/*"
+                        className="hidden"
+                        disabled={isAddingLesson}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] || null;
+                          if (f) onPickAddVideo(f);
+                          e.target.value = "";
+                        }}
+                      />
+                      <div className="w-full border rounded-md px-3 py-2 bg-white hover:bg-gray-50 transition flex items-center gap-2 cursor-pointer">
+                        <Video className="w-4 h-4 text-gray-600" />
+                        <span className="text-sm text-gray-700">
+                          {addForm.videoFile ? addForm.videoFile.name : "Выбрать видео"}
+                        </span>
+                      </div>
+                    </label>
                   </div>
                 </div>
 
                 {addForm.videoPreviewUrl ? (
                   <div className="max-w-md">
-                    <div className="rounded overflow-hidden bg-black">
-                      <video
-                        src={addForm.videoPreviewUrl}
-                        controls
-                        className="w-full h-[180px] object-cover bg-black"
-                        preload="metadata"
-                      />
-                    </div>
+                    <VideoPreview source={addForm.videoPreviewUrl} heightClass="h-[180px]" />
                   </div>
                 ) : null}
 
-                <div className="space-y-1">
-                  <label className="text-sm">Название урока</label>
-                  <Input
-                    value={addForm.title}
-                    onChange={(e) => setAddForm((p) => ({ ...p, title: e.target.value }))}
-                    placeholder="Например: Компоненты и props"
-                    disabled={isAddingLesson}
-                  />
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-sm">Название урока</label>
+                    <Input
+                      value={addForm.title}
+                      onChange={(e) => setAddForm((p) => ({ ...p, title: e.target.value }))}
+                      placeholder="Например: Компоненты и props"
+                      disabled={isAddingLesson}
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-sm">Порядок</label>
+                    <Input
+                      type="number"
+                      value={addForm.order}
+                      onChange={(e) => setAddForm((p) => ({ ...p, order: e.target.value }))}
+                      placeholder="1"
+                      disabled={isAddingLesson}
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-1">
@@ -1705,15 +2071,26 @@ export function TeacherDashboard() {
           </TabsContent>
         </Tabs>
 
-        {/* MODAL: добавить курс */}
-        <Modal title="Новый курс" isOpen={isAddCourseOpen} onClose={() => setIsAddCourseOpen(false)}>
+        {/* MODAL: добавить курс (+ фото) */}
+        <Modal
+          title="Новый курс"
+          isOpen={isAddCourseOpen}
+          onClose={() => setIsAddCourseOpen(false)}
+          closeOnOverlay={false}
+        >
           <div className="space-y-3">
             <div className="space-y-1">
               <label className="text-sm">Название курса</label>
-              <Input
-                value={newCourseTitle}
-                onChange={(e) => setNewCourseTitle(e.target.value)}
-                placeholder="React с нуля"
+              <Input value={newCourseTitle} onChange={(e) => setNewCourseTitle(e.target.value)} placeholder="React с нуля" />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm">Описание (опционально)</label>
+              <Textarea
+                rows={3}
+                value={newCourseDescription}
+                onChange={(e) => setNewCourseDescription(e.target.value)}
+                placeholder="Коротко о курсе"
               />
             </div>
 
@@ -1728,26 +2105,56 @@ export function TeacherDashboard() {
               />
             </div>
 
+            <div className="space-y-1">
+              <label className="text-sm">Картинка курса (опционально)</label>
+              <label className="block">
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    setNewCoursePhoto(f);
+                    e.target.value = "";
+                  }}
+                />
+                <div className="w-full border rounded-md px-3 py-2 bg-white hover:bg-gray-50 transition flex items-center gap-2 cursor-pointer">
+                  <ImageIcon className="w-4 h-4 text-gray-600" />
+                  <span className="text-sm text-gray-700">
+                    {newCoursePhoto ? newCoursePhoto.name : "Выбрать картинку"}
+                  </span>
+                </div>
+              </label>
+            </div>
+
             <div className="flex gap-3">
               <Button onClick={createNewCourse} className="w-full">
                 Добавить
               </Button>
               <Button variant="outline" onClick={() => setIsAddCourseOpen(false)} className="w-full">
-                Отмена
+                Закрыть
               </Button>
             </div>
           </div>
         </Modal>
 
-        {/* MODAL: редактировать курс */}
-        <Modal title="Редактировать курс" isOpen={isEditCourseOpen} onClose={() => setIsEditCourseOpen(false)}>
+        {/* MODAL: редактировать курс (+ удалить) */}
+        <Modal
+          title="Редактировать курс"
+          isOpen={isEditCourseOpen}
+          onClose={() => setIsEditCourseOpen(false)}
+          closeOnOverlay={false}
+        >
           <div className="space-y-3">
+            {editCourseForm.photoUrl ? (
+              <div className="rounded-xl overflow-hidden border bg-black">
+                <img src={editCourseForm.photoUrl} alt="course" className="w-full h-[140px] object-cover" />
+              </div>
+            ) : null}
+
             <div className="space-y-1">
               <label className="text-sm">Название</label>
-              <Input
-                value={editCourseForm.title}
-                onChange={(e) => setEditCourseForm((p) => ({ ...p, title: e.target.value }))}
-              />
+              <Input value={editCourseForm.title} onChange={(e) => setEditCourseForm((p) => ({ ...p, title: e.target.value }))} />
             </div>
 
             <div className="space-y-1">
@@ -1771,25 +2178,155 @@ export function TeacherDashboard() {
               />
             </div>
 
+            <div className="space-y-1">
+              <label className="text-sm">Новая картинка (опционально)</label>
+              <label className="block">
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    setEditCourseForm((p) => ({ ...p, photoFile: f }));
+                    e.target.value = "";
+                  }}
+                />
+                <div className="w-full border rounded-md px-3 py-2 bg-white hover:bg-gray-50 transition flex items-center gap-2 cursor-pointer">
+                  <ImageIcon className="w-4 h-4 text-gray-600" />
+                  <span className="text-sm text-gray-700">
+                    {editCourseForm.photoFile ? editCourseForm.photoFile.name : "Выбрать картинку"}
+                  </span>
+                </div>
+              </label>
+            </div>
+
             <div className="flex gap-3">
               <Button onClick={saveEditCourse} className="w-full">
                 Сохранить
               </Button>
-              <Button variant="outline" onClick={() => setIsEditCourseOpen(false)} className="w-full">
-                Отмена
+              <Button
+                variant="destructive"
+                className="w-full"
+                onClick={() =>
+                  setConfirmDeleteCourse({
+                    open: true,
+                    courseId: editCourseId,
+                    courseTitle: editCourseForm.title || "Курс",
+                  })
+                }
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Удалить курс
               </Button>
             </div>
           </div>
         </Modal>
 
-        {/* ✅ ОВЕРЛЕЙ: большой, по центру */}
+        {/* MODAL: редактировать урок */}
+        <Modal title="Редактировать урок" isOpen={isEditLessonOpen} onClose={closeEditLessonModal} closeOnOverlay={false}>
+          <div className="space-y-4">
+            <VideoPreview source={editLessonForm.videoPreviewUrl || editLessonForm.backendVideo} heightClass="h-[160px]" />
+
+            <div className="flex items-center justify-between gap-2">
+              <YouTubeStatusBadge status={editLessonForm.youtube_status} error={editLessonForm.youtube_error} />
+              <Button variant="outline" size="sm" onClick={() => refreshOneLessonStatus(editLessonId)} disabled={!editLessonId}>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Обновить
+              </Button>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-sm">Название</label>
+                <Input value={editLessonForm.title} onChange={(e) => setEditLessonForm((p) => ({ ...p, title: e.target.value }))} />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm">Порядок (order)</label>
+                <Input
+                  type="number"
+                  value={editLessonForm.order}
+                  onChange={(e) => setEditLessonForm((p) => ({ ...p, order: e.target.value }))}
+                  placeholder="1"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm">Описание</label>
+              <Textarea rows={3} value={editLessonForm.description} onChange={(e) => setEditLessonForm((p) => ({ ...p, description: e.target.value }))} />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm">Заменить видео (опционально)</label>
+              <label className="block">
+                <input
+                  type="file"
+                  accept="video/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    if (f) onPickEditVideo(f);
+                    e.target.value = "";
+                  }}
+                />
+                <div className="w-full border rounded-md px-3 py-2 bg-white hover:bg-gray-50 transition flex items-center gap-2 cursor-pointer">
+                  <Video className="w-4 h-4 text-gray-600" />
+                  <span className="text-sm text-gray-700">
+                    {editLessonForm.videoFile ? editLessonForm.videoFile.name : "Выбрать новое видео"}
+                  </span>
+                </div>
+              </label>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-sm">Домашнее задание (опционально)</label>
+              <Textarea rows={2} value={editLessonForm.homeworkDescription} onChange={(e) => setEditLessonForm((p) => ({ ...p, homeworkDescription: e.target.value }))} />
+            </div>
+
+            <LessonHomeworkMaterialsSingle
+              file={editLessonForm.homeworkFile}
+              existingUrl={editLessonForm.homeworkExistingFileUrl}
+              onPick={(f) => setEditLessonForm((p) => ({ ...p, homeworkFile: f }))}
+              onClear={() => setEditLessonForm((p) => ({ ...p, homeworkFile: null }))}
+            />
+
+            <div className="flex gap-3">
+              <Button onClick={saveEditLesson} className="w-full">
+                Сохранить
+              </Button>
+
+              <Button variant="destructive" onClick={() => askDeleteLesson(editLessonId, editLessonForm.title)} className="w-full">
+                <Trash2 className="w-4 h-4 mr-2" />
+                Удалить урок
+              </Button>
+            </div>
+          </div>
+        </Modal>
+
+        {/* Confirm: delete lesson */}
+        <ConfirmModal
+          isOpen={confirmDeleteLesson.open}
+          title="Удалить урок?"
+          description={`Урок: ${confirmDeleteLesson.lessonTitle}\nЭто действие необратимо.`}
+          onCancel={() => setConfirmDeleteLesson({ open: false, lessonId: "", lessonTitle: "" })}
+          onConfirm={confirmDeleteLessonNow}
+          confirmText="Удалить урок"
+        />
+
+        {/* Confirm: delete course */}
+        <ConfirmModal
+          isOpen={confirmDeleteCourse.open}
+          title="Удалить курс?"
+          description={`Курс: ${confirmDeleteCourse.courseTitle}\nУдалятся и уроки курса. Это действие необратимо.`}
+          onCancel={() => setConfirmDeleteCourse({ open: false, courseId: "", courseTitle: "" })}
+          onConfirm={confirmDeleteCourseNow}
+          confirmText="Удалить курс"
+        />
+
+        {/* Overlay: uploading */}
         {isAddingLesson ? (
-          <div
-            className="fixed inset-0 z-[60] flex items-center justify-center px-4"
-            role="status"
-            aria-live="polite"
-            aria-label="Видео загружается"
-          >
+          <div className="fixed inset-0 z-[60] flex items-center justify-center px-4" role="status" aria-live="polite">
             <div className="absolute inset-0 bg-black/70" />
             <div className="relative z-10 w-full max-w-md rounded-2xl bg-white shadow-xl border p-6">
               <div className="flex flex-col items-center text-center gap-4">
