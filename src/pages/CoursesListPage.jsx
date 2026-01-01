@@ -24,7 +24,6 @@ const norm = (s) => String(s ?? "").trim();
 const lower = (s) => norm(s).toLowerCase();
 
 function getTeacherName(course) {
-  // ✅ максимально “терпимый” маппинг под разные бэки
   return (
     course?.instructor_name ||
     course?.instructorName ||
@@ -48,8 +47,7 @@ function getCourseCategoryName(course, categories) {
   if (course?.category_name) return course.category_name;
   if (course?.category?.name) return course.category.name;
 
-  const catId =
-    course?.categoryId ?? course?.category_id ?? course?.category ?? null;
+  const catId = course?.categoryId ?? course?.category_id ?? course?.category ?? null;
 
   const cat = (Array.isArray(categories) ? categories : []).find(
     (c) => String(c?.id ?? c?.pk ?? "") === String(catId ?? "")
@@ -75,9 +73,7 @@ export function CoursesListPage() {
     return courses.filter((c) => {
       const t = lower(c?.title);
       const d = lower(c?.description);
-      const cat = lower(
-        c?.categoryName || c?.category_name || c?.category?.name
-      );
+      const cat = lower(c?.categoryName || c?.category_name || c?.category?.name);
       const teacher = lower(getTeacherName(c));
       return t.includes(q) || d.includes(q) || cat.includes(q) || teacher.includes(q);
     });
@@ -85,7 +81,6 @@ export function CoursesListPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 overflow-x-hidden">
-      {/* HERO 100% ширины */}
       <section className="relative text-white w-screen left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] overflow-hidden">
         <div
           className="absolute inset-0 bg-cover bg-center"
@@ -97,9 +92,7 @@ export function CoursesListPage() {
 
         <div className="relative app-container py-12">
           <h1 className="text-4xl mb-3 drop-shadow-sm">Все курсы</h1>
-          <p className="text-xl text-white/90 max-w-2xl">
-            Найдите подходящий курс и прокачайте навыки
-          </p>
+          <p className="text-xl text-white/90 max-w-2xl">Найдите подходящий курс и прокачайте навыки</p>
         </div>
       </section>
 
@@ -141,11 +134,9 @@ export function CoursesListPage() {
               {filtered.map((course) => {
                 const lessonsCount = Number(course?.lessonsCount ?? course?.lessons_count ?? 0);
 
-                // ✅ ключ для роутинга
                 const courseKey = course?.slug ? String(course.slug) : String(course.id);
                 const link = `/course/${courseKey}`;
 
-                // ✅ preview — чтобы на CoursePage было ФИО преподавателя даже если /courses/{id}/ его не отдаёт
                 const coursePreview = {
                   id: course?.id ?? null,
                   slug: course?.slug ?? null,
@@ -191,10 +182,7 @@ export function CoursesListPage() {
                       <div className="relative min-h-[360px] flex flex-col justify-between">
                         <CardHeader className="p-5 text-white">
                           <div className="flex items-start justify-between gap-3">
-                            <Badge
-                              className="w-fit bg-white/15 text-white border-white/20"
-                              variant="secondary"
-                            >
+                            <Badge className="w-fit bg-white/15 text-white border-white/20" variant="secondary">
                               {getCourseCategoryName(course, categories)}
                             </Badge>
 
@@ -232,9 +220,7 @@ export function CoursesListPage() {
                               <span className="font-semibold">{lessonsCount}</span>
                             </div>
 
-                            <Button className="w-full bg-white text-gray-900 hover:bg-white/90">
-                              Подробнее
-                            </Button>
+                            <Button className="w-full bg-white text-gray-900 hover:bg-white/90">Подробнее</Button>
                           </div>
                         </CardContent>
                       </div>
