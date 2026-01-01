@@ -1046,9 +1046,6 @@ export function CoursePage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-xl font-semibold text-gray-900">Доступ ограничен</div>
-                    <div className="text-sm text-gray-600 mt-1">
-                      Ты увидел только превью. Полный урок открывается после покупки тарифа.
-                    </div>
                   </div>
 
                   <button
