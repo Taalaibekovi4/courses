@@ -24,28 +24,16 @@ function getAfterLoginPath(role) {
   return "/";
 }
 
-/**
- * ✅ ВСЕГДА возвращает чистый текст без `non_field_errors:`
- */
 function extractErrorMessage(err) {
   const d = err?.response?.data;
 
-  // если сервер вернул строку
   if (typeof d === "string") {
-    return d
-      .replace(/^non_field_errors\s*:\s*/i, "")
-      .trim() || "Неверный email или пароль.";
+    return d.replace(/^non_field_errors\s*:\s*/i, "").trim() || "Неверный email или пароль.";
   }
-
-  // DRF: { non_field_errors: ["..."] }
   if (Array.isArray(d?.non_field_errors) && d.non_field_errors[0]) {
     return String(d.non_field_errors[0]).trim();
   }
-
-  // DRF: { detail: "..." }
-  if (d?.detail) {
-    return String(d.detail).trim();
-  }
+  if (d?.detail) return String(d.detail).trim();
 
   return "Неверный email или пароль.";
 }
@@ -60,11 +48,11 @@ export function LoginPage() {
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
-  const canSubmit = useMemo(() => {
-    return !!norm(email) && !!norm(password) && !pending && !isLoading;
-  }, [email, password, pending, isLoading]);
+  const canSubmit = useMemo(
+    () => !!norm(email) && !!norm(password) && !pending && !isLoading,
+    [email, password, pending, isLoading]
+  );
 
-  // ✅ редирект только если реально залогинен
   useEffect(() => {
     if (!isLoading && user?.role) {
       navigate(getAfterLoginPath(user.role), { replace: true });
@@ -81,23 +69,15 @@ export function LoginPage() {
     try {
       const result = await login(norm(email), password);
 
-      // login() вернул true → всё ок, редирект будет в useEffect
       if (result === true) return;
 
-      // если login() вернул объект с ошибкой
       if (result && typeof result === "object") {
         const msg =
-          result.error ||
-          result.detail ||
-          result.message ||
-          "Неверный email или пароль.";
-        setError(
-          String(msg).replace(/^non_field_errors\s*:\s*/i, "").trim()
-        );
+          result.error || result.detail || result.message || "Неверный email или пароль.";
+        setError(String(msg).replace(/^non_field_errors\s*:\s*/i, "").trim());
         return;
       }
 
-      // false / undefined
       setError("Неверный email или пароль.");
     } catch (err) {
       setError(extractErrorMessage(err));
@@ -107,16 +87,18 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Вход в систему</CardTitle>
-          <CardDescription>
+    <div className="min-h-screen bg-white text-black flex items-center justify-center px-4">
+      <Card className="w-full max-w-md rounded-2xl border border-black/10 bg-white shadow-[0_18px_60px_rgba(0,0,0,0.10)]">
+        <CardHeader className="p-6 sm:p-8">
+          <CardTitle className="text-2xl sm:text-3xl font-extrabold">
+            Вход
+          </CardTitle>
+          <CardDescription className="text-black/60">
             Войдите в аккаунт для доступа к курсам
           </CardDescription>
         </CardHeader>
 
-        <CardContent>
+        <CardContent className="p-6 pt-0 sm:p-8 sm:pt-0">
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
               <Alert variant="destructive">
@@ -125,40 +107,39 @@ export function LoginPage() {
             )}
 
             <div className="space-y-2">
-              <label className="text-sm">Email</label>
+              <label className="text-sm text-black/80">Email</label>
               <Input
+                type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                type="email"
-                autoComplete="email"
-                required
                 disabled={pending || isLoading}
+                className="h-11 bg-white border-black/15 text-black rounded-xl"
               />
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm">Пароль</label>
+              <label className="text-sm text-black/80">Пароль</label>
               <Input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                required
                 disabled={pending || isLoading}
+                className="h-11 bg-white border-black/15 text-black rounded-xl"
               />
             </div>
 
-            <Button type="submit" className="w-full" disabled={!canSubmit}>
+            <Button
+              type="submit"
+              disabled={!canSubmit}
+              className="w-full h-11 rounded-xl bg-[#FFD70A] text-black font-bold hover:bg-[#ffde33]"
+            >
               {pending ? "Входим..." : "Войти"}
             </Button>
           </form>
 
-          <div className="mt-5 text-sm text-gray-600 text-center">
+          <div className="mt-6 text-sm text-black/60 text-center">
             Нет аккаунта?{" "}
-            <Link
-              to="/register"
-              className="text-blue-700 hover:underline font-medium"
-            >
+            <Link to="/register" className="text-black font-semibold hover:underline">
               Регистрация
             </Link>
           </div>

@@ -99,11 +99,6 @@ function getCoursePhotoFromAny(obj) {
 
 /** ✅ НОРМАЛИЗАЦИЯ courseId урока (самая важная часть) */
 function normalizeLessonCourseId(l) {
-  // варианты:
-  // - lesson.course_id
-  // - lesson.course (number/string)
-  // - lesson.course = { id }
-  // - lesson.courseId
   const c = l?.course;
   const cid =
     l?.course_id ??
@@ -483,11 +478,10 @@ export function CoursePage() {
     setLessonsError("");
 
     try {
-      // 1) если уроки вложены в /courses/{id}/, используем их, но фильтруем строго по courseId
       const embedded = extractLessonsFromCourse(course);
       if (embedded.length) {
         const filtered = embedded.filter((l) => String(l.courseId || "") === String(cid));
-        const finalList = filtered.length ? filtered : []; // ❗ НЕ берем "все", если не совпало
+        const finalList = filtered.length ? filtered : [];
         finalList.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
         setLessons(finalList);
         if (courseLessonsCount > 0 && finalList.length === 0) {
@@ -496,7 +490,6 @@ export function CoursePage() {
         return;
       }
 
-      // 2) иначе грузим с эндпоинта уроков строго с фильтром
       let res = await tryGet(publicApi, "/lessons/", { params: { course_id: cid } });
       let arr = res.ok ? extractArrayAny(res.data) : [];
 
@@ -507,8 +500,6 @@ export function CoursePage() {
 
       if (arr.length) {
         const normalized = normalizeLessonsList(arr);
-
-        // ❗ строгий фильтр: берем только те, у кого courseId совпал
         const filtered = normalized.filter((l) => String(l.courseId || "") === String(cid));
 
         filtered.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
@@ -609,7 +600,7 @@ export function CoursePage() {
     setVideoError("");
     setIsVideoEnded(false);
     setFallbackIframeId("");
-    setIsMuted(true); // ✅ при каждом открытии стартуем в mute чтобы автоплей завёлся
+    setIsMuted(true);
     setIframeKey((k) => k + 1);
   }, []);
 
@@ -679,7 +670,6 @@ export function CoursePage() {
     async (videoId) => {
       const ok = await ensureYouTubeScriptWithTimeout(3500);
 
-      // ✅ fallback iframe: autoplay + mute (иначе на телефоне часто будет пауза)
       if (!ok) {
         setFallbackIframeId(videoId);
         setIsVideoReady(true);
@@ -719,7 +709,6 @@ export function CoursePage() {
               setIsVideoReady(true);
               setVideoError("");
 
-              // ✅ стартуем muted чтобы autoplay точно сработал на телефоне
               try {
                 e.target.seekTo(0, true);
                 if (typeof e.target.mute === "function") e.target.mute();
@@ -753,7 +742,6 @@ export function CoursePage() {
     [destroyYouTubePlayer, startYouTubeTimer, stopYouTubeTimer]
   );
 
-  // ✅ кнопка включения звука (пользовательский жест => браузер разрешит)
   const enableSound = useCallback(() => {
     setIsMuted(false);
 
@@ -767,7 +755,6 @@ export function CoursePage() {
       return;
     }
 
-    // html video
     const v = htmlVideoRef.current;
     if (v) {
       try {
@@ -778,7 +765,6 @@ export function CoursePage() {
       return;
     }
 
-    // fallback iframe: перезапускаем iframe уже без mute (клик был => обычно стартует со звуком)
     if (fallbackIframeId) {
       setIframeKey((k) => k + 1);
     }
@@ -806,7 +792,7 @@ export function CoursePage() {
         return;
       }
 
-      const rawOriginal = String(l?.videoUrl || pickLessonVideo(l?._raw) || "").trim();
+      const rawOriginal = String(activeLesson?.videoUrl || pickLessonVideo(activeLesson?._raw) || "").trim();
       const raw = isDirectVideoUrl(rawOriginal) ? toAbsUrl(rawOriginal) : rawOriginal;
 
       if (!raw) {
@@ -819,7 +805,6 @@ export function CoursePage() {
 
       if (!alive) return;
 
-      // direct mp4/webm/ogg
       if (isDirect) {
         setIsVideoReady(true);
         setVideoError("");
@@ -827,7 +812,6 @@ export function CoursePage() {
         return;
       }
 
-      // youtube
       if (!ytId) {
         setVideoError("Неверная ссылка/ID. Нужен YouTube URL или videoId (11 символов) или прямой mp4/webm/ogg.");
         return;
@@ -865,14 +849,16 @@ export function CoursePage() {
 
   if (!course && !courseLoading) {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-[#0b0b0b] text-white">
         <div className="app-container py-12">
-          <Card>
+          <Card className="rounded-2xl border border-white/10 bg-white/5 text-white shadow-[0_12px_40px_rgba(0,0,0,0.35)]">
             <CardContent className="py-12 text-center">
-              <p className="text-gray-600">Курс не найден</p>
+              <p className="text-white/80">Курс не найден</p>
               <div className="mt-4">
                 <Link to="/courses">
-                  <Button variant="outline">Назад к курсам</Button>
+                  <Button variant="outline" className="border-white/20 text-white hover:bg-white/10">
+                    Назад к курсам
+                  </Button>
                 </Link>
               </div>
             </CardContent>
@@ -885,70 +871,75 @@ export function CoursePage() {
   const lessonsCountShown = courseLessonsCount || lessons.length || 0;
 
   return (
-    <div className="min-h-screen bg-gray-50 overflow-x-hidden">
-      <section className={`relative text-white overflow-hidden ${fullBleed}`}>
+    <div className="min-h-screen bg-[#0b0b0b] text-white overflow-x-hidden">
+      {/* HERO */}
+      <section className={`relative overflow-hidden ${fullBleed}`}>
         <div className="absolute inset-0">
-          <img
-            src={coverUrl}
-            alt={getCourseTitle(course)}
-            className="h-full w-full object-cover"
-            loading="lazy"
-            onError={(e) => {
-              e.currentTarget.src = FALLBACK_COVER;
-            }}
-          />
+          <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${coverUrl})` }} />
+          <div className="absolute inset-0 bg-black/70" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_30%,rgba(255,214,10,.20),transparent_55%),radial-gradient(circle_at_70%_20%,rgba(255,214,10,.10),transparent_55%)]" />
         </div>
 
-        <div className="absolute inset-0 bg-gradient-to-r from-blue-700/85 to-purple-700/75" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/55 via-black/20 to-transparent" />
-
-        <div className="relative app-container py-12">
+        <div className="relative app-container py-14 sm:py-16">
           <div className="max-w-4xl">
             <div className="flex flex-wrap items-center gap-3">
               <Badge className="bg-white/15 text-white border-white/20" variant="secondary">
                 {categoryName}
               </Badge>
 
-              <span className="inline-flex items-center gap-2 text-sm bg-white/10 border border-white/15 rounded-md px-3 py-2">
+              <span className="inline-flex items-center gap-2 text-xs sm:text-sm bg-white/10 border border-white/15 rounded-md px-3 py-2 text-white/90">
                 <BookOpen className="w-4 h-4" />
                 {lessonsCountShown} уроков
               </span>
 
-              <span className="inline-flex items-center gap-2 text-sm bg-white/10 border border-white/15 rounded-md px-3 py-2">
+              <span className="inline-flex items-center gap-2 text-xs sm:text-sm bg-white/10 border border-white/15 rounded-md px-3 py-2 text-white/90">
                 <GraduationCap className="w-4 h-4" />
                 {teacherName}
               </span>
             </div>
-            <h1 className="text-4xl sm:text-5xl mt-4 leading-tight">{getCourseTitle(course)}</h1>
-            <p className="text-lg sm:text-xl text-white/90 mt-3 max-w-3xl">{getCourseDesc(course)}</p>
+
+            <h1 className="mt-4 text-[#FFD70A] text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-[0.08em] uppercase">
+              {getCourseTitle(course)}
+            </h1>
+
+            <p className="mt-4 text-white/80 text-base sm:text-lg max-w-3xl">
+              {getCourseDesc(course)}
+            </p>
           </div>
         </div>
 
-        <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-gray-50 to-transparent" />
+        <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-[#0b0b0b] to-transparent" />
       </section>
 
+      {/* CONTENT */}
       <div className="app-container py-10">
         <div className="grid lg:grid-cols-3 gap-8">
+          {/* LEFT */}
           <div className="lg:col-span-2 space-y-6">
-            <Card className="border-0 shadow-sm">
+            <Card className="rounded-2xl border border-white/10 bg-white/5 text-white shadow-[0_12px_40px_rgba(0,0,0,0.35)]">
               <CardHeader className="flex flex-row items-center justify-between gap-3">
-                <CardTitle>Программа курса</CardTitle>
-                <Button variant="outline" onClick={() => loadLessons()} disabled={lessonsLoading}>
+                <CardTitle className="text-white font-extrabold">Программа курса</CardTitle>
+                <Button
+                  variant="outline"
+                  onClick={() => loadLessons()}
+                  disabled={lessonsLoading}
+                  className="border-white/20 text-white hover:bg-white/10"
+                >
                   Обновить
                 </Button>
               </CardHeader>
 
               <CardContent>
                 {lessonsLoading && (
-                  <div className="py-6 text-center text-gray-600">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-700 mx-auto" />
+                  <div className="py-6 text-center text-white/70">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white/50 mx-auto" />
                     <div className="mt-2">Загружаем уроки...</div>
                   </div>
                 )}
 
                 {!lessonsLoading && lessons.length === 0 && (
                   <div className="py-6 text-center">
-                    <div className="text-gray-900 font-semibold">
+                    <div className="text-white font-semibold">
                       {lessonsError
                         ? "Не удалось показать список уроков."
                         : courseLessonsCount > 0
@@ -957,11 +948,16 @@ export function CoursePage() {
                     </div>
 
                     {lessonsError ? (
-                      <div className="mt-2 text-sm text-gray-600 max-w-xl mx-auto">{lessonsError}</div>
+                      <div className="mt-2 text-sm text-white/70 max-w-xl mx-auto">{lessonsError}</div>
                     ) : null}
 
                     <div className="mt-4">
-                      <Button onClick={() => loadLessons()}>Проверить снова</Button>
+                      <Button
+                        onClick={() => loadLessons()}
+                        className="h-11 px-6 rounded-xl bg-[#FFD70A] text-black hover:bg-[#ffde33] font-bold"
+                      >
+                        Проверить снова
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -975,30 +971,30 @@ export function CoursePage() {
                         onClick={() => openPreview(lesson.id)}
                         className={[
                           "w-full text-left group flex items-start gap-3 p-4 rounded-2xl border transition",
-                          "bg-white hover:bg-gray-50 border-gray-200 hover:border-gray-300",
+                          "border-white/10 bg-black/30 hover:bg-white/5 hover:border-white/20",
                         ].join(" ")}
                       >
-                        <div className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-sm mt-0.5 font-semibold bg-gray-100 text-gray-900">
+                        <div className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-sm mt-0.5 font-semibold bg-white/10 text-white">
                           {index + 1}
                         </div>
 
                         <div className="flex-1 min-w-0">
                           <div className="flex items-start justify-between gap-4">
                             <div className="min-w-0">
-                              <h4 className="font-semibold text-gray-900 truncate">{lesson.title}</h4>
-                              <p className="text-sm text-gray-600 mt-1 line-clamp-2">{lesson.description}</p>
+                              <h4 className="font-semibold text-white truncate">{lesson.title}</h4>
+                              <p className="text-sm text-white/70 mt-1 line-clamp-2">{lesson.description}</p>
 
                               {lesson.homeworkDescription ? (
-                                <div className="mt-2 text-xs text-blue-700 inline-flex items-center gap-1 bg-blue-50 border border-blue-100 rounded-full px-3 py-1">
+                                <div className="mt-2 text-xs text-black inline-flex items-center gap-1 bg-[#FFD70A] rounded-full px-3 py-1 font-bold">
                                   <CheckCircle className="w-3.5 h-3.5" />
                                   Домашнее задание
                                 </div>
                               ) : null}
                             </div>
 
-                            <span className="shrink-0 inline-flex items-center gap-2 text-sm px-3 py-2 rounded-xl border border-gray-200 bg-white group-hover:bg-gray-50 transition">
-                              <PlayCircle className="w-5 h-5 text-gray-700" />
-                              <span className="hidden sm:inline text-gray-800">Смотреть</span>
+                            <span className="shrink-0 inline-flex items-center gap-2 text-sm px-3 py-2 rounded-xl border border-white/15 bg-white/5 group-hover:bg-white/10 transition">
+                              <PlayCircle className="w-5 h-5 text-white/85" />
+                              <span className="hidden sm:inline text-white/90">Смотреть</span>
                             </span>
                           </div>
                         </div>
@@ -1010,12 +1006,13 @@ export function CoursePage() {
             </Card>
           </div>
 
+          {/* RIGHT */}
           <div className="space-y-6">
-            <Card className="border-0 shadow-sm lg:sticky lg:top-24">
+            <Card className="rounded-2xl border border-white/10 bg-white/5 text-white shadow-[0_12px_40px_rgba(0,0,0,0.35)] lg:sticky lg:top-24">
               <CardHeader>
                 <div className="flex items-center justify-between gap-3">
-                  <CardTitle>Тарифы</CardTitle>
-                  <Badge variant="secondary" className="shrink-0">
+                  <CardTitle className="text-white font-extrabold">Тарифы</CardTitle>
+                  <Badge className="bg-white/15 text-white border-white/20" variant="secondary">
                     {tariffs.length || 0}
                   </Badge>
                 </div>
@@ -1025,14 +1022,14 @@ export function CoursePage() {
                 <div ref={tariffsRef} />
 
                 {tariffsLoading ? (
-                  <div className="py-2 text-sm text-gray-600">
-                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-700" />
+                  <div className="py-2 text-sm text-white/70">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white/50" />
                     <div className="mt-2">Загрузка тарифов...</div>
                   </div>
                 ) : tariffsError ? (
-                  <div className="text-sm text-red-600">{tariffsError}</div>
+                  <div className="text-sm text-red-300">{tariffsError}</div>
                 ) : tariffs.length === 0 ? (
-                  <div className="text-sm text-gray-600">Тарифы пока не добавлены.</div>
+                  <div className="text-sm text-white/70">Тарифы пока не добавлены.</div>
                 ) : (
                   <div className="space-y-3">
                     {tariffs.map((t, idx) => {
@@ -1043,35 +1040,36 @@ export function CoursePage() {
                         <div
                           key={t.id}
                           className={[
-                            "rounded-2xl border p-4 bg-white",
-                            "transition hover:border-gray-300 hover:shadow-sm",
+                            "rounded-2xl border p-4",
+                            "border-white/10 bg-black/25",
+                            "transition hover:border-white/20 hover:bg-black/35",
                           ].join(" ")}
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
-                                <div className="font-semibold text-gray-900 truncate">{title}</div>
+                                <div className="font-semibold text-white truncate">{title}</div>
                               </div>
 
                               <div className="mt-2 flex items-end gap-2">
-                                <div className="text-2xl font-semibold text-gray-900">{price}</div>
+                                <div className="text-2xl font-extrabold text-[#FFD70A]">{price}</div>
                               </div>
 
                               {t.description ? (
-                                <div className="mt-2 text-sm text-gray-600 line-clamp-3">{t.description}</div>
+                                <div className="mt-2 text-sm text-white/70 line-clamp-3">{t.description}</div>
                               ) : null}
 
-                              <div className="mt-3 grid gap-2 text-sm text-gray-700">
+                              <div className="mt-3 grid gap-2 text-sm text-white/80">
                                 <div className="flex items-center gap-2">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                                  <span className="w-1.5 h-1.5 rounded-full bg-white/40" />
                                   Доступ к урокам курса
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                                  <span className="w-1.5 h-1.5 rounded-full bg-white/40" />
                                   Домашние задания
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                                  <span className="w-1.5 h-1.5 rounded-full bg-white/40" />
                                   Активация токеном после оплаты
                                 </div>
                               </div>
@@ -1085,7 +1083,7 @@ export function CoursePage() {
                               rel="noopener noreferrer"
                               className="block"
                             >
-                              <Button className="w-full gap-2">
+                              <Button className="w-full gap-2 h-11 rounded-xl bg-[#FFD70A] text-black hover:bg-[#ffde33] font-bold">
                                 <ShoppingCart className="w-4 h-4" />
                                 Купить тариф
                               </Button>
@@ -1097,9 +1095,9 @@ export function CoursePage() {
                   </div>
                 )}
 
-                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                  <div className="text-sm font-semibold text-gray-900">Как это работает</div>
-                  <div className="mt-2 text-sm text-gray-700 space-y-2">
+                <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                  <div className="text-sm font-extrabold text-white">Как это работает</div>
+                  <div className="mt-2 text-sm text-white/75 space-y-2">
                     <div>1) Выбираешь тариф.</div>
                     <div>2) Оплачиваешь.</div>
                     <div>3) Тебе дают токен — активируешь в кабинете.</div>
@@ -1264,8 +1262,8 @@ export function CoursePage() {
                   </div>
                 </div>
 
-                <div className="mt-5 grid grid-cols-2 gap-3">
-                  <Button variant="outline" onClick={closePreview}>
+                <div className=" text-gray-900 mt-5 grid grid-cols-2 gap-3">
+                  <Button  variant="outline" onClick={closePreview}>
                     Закрыть
                   </Button>
                   <Button

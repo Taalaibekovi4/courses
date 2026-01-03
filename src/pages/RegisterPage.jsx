@@ -17,48 +17,6 @@ function getApiBase() {
   return str(raw).replace(/\/+$/, "");
 }
 
-/**
- * Поле "Имя и фамилия" в UI:
- * - любой язык
- * - разрешены пробелы
- * - только буквы
- * - без цифр и спецсимволов
- */
-const FULLNAME_REGEX = /^[\p{L}]+(?:\s+[\p{L}]+)*$/u;
-
-/**
- * Swagger: username должен соответствовать ^[\w.@+-]+$
- */
-const USERNAME_REGEX = /^[\w.@+-]+$/;
-
-/**
- * Транслитерация (минимальная) + генерация username под Swagger:
- * - пробелы -> _
- * - убираем все кроме [A-Za-z0-9_.@+-]
- * - если имя не латиница -> fallback user + suffix
- *
- * Важно: без бекенда мы НЕ можем хранить "реальное имя" отдельно,
- * поэтому username неизбежно будет латиницей/slug-ом.
- */
-function makeSwaggerUsernameFromFullName(fullName) {
-  const clean = str(fullName);
-
-  // заменим пробелы на _
-  let candidate = clean.replace(/\s+/g, "_");
-
-  // уберем всё, что не проходит swagger-regex
-  candidate = candidate.replace(/[^\w.@+-]/g, "");
-
-  // на всякий: если пусто или не валидно — делаем user_xxxx
-  if (!candidate || !USERNAME_REGEX.test(candidate)) {
-    const suffix = Math.random().toString(36).slice(2, 6);
-    candidate = `user_${suffix}`;
-  }
-
-  // ограничение swagger maxLength=150
-  return candidate.slice(0, 150);
-}
-
 function pickFirstFieldError(d, field) {
   const v = d?.[field];
   if (!v) return "";
@@ -70,8 +28,10 @@ function pickFirstFieldError(d, field) {
 export default function RegisterPage() {
   const navigate = useNavigate();
 
+  // ✅ swagger fields
   const [email, setEmail] = useState("");
-  const [fullName, setFullName] = useState(""); // UI: Имя и фамилия
+  const [firstName, setFirstName] = useState(""); // first_name
+  const [lastName, setLastName] = useState("");   // last_name
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
@@ -79,23 +39,15 @@ export default function RegisterPage() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
-  const fullNameValid = useMemo(() => FULLNAME_REGEX.test(fullName), [fullName]);
   const passwordsMatch = password && password === password2;
 
-  // username который реально пойдет на бек
-  const swaggerUsername = useMemo(
-    () => makeSwaggerUsernameFromFullName(fullName),
-    [fullName]
-  );
-
   const canSubmit = useMemo(() => {
-    if (!str(email) || !str(fullName) || !password || !password2) return false;
-    if (!fullNameValid) return false;
+    if (!str(email) || !str(firstName) || !str(lastName) || !password || !password2) return false;
     if (password.length < 8) return false;
     if (!passwordsMatch) return false;
     if (pending) return false;
     return true;
-  }, [email, fullName, password, password2, fullNameValid, passwordsMatch, pending]);
+  }, [email, firstName, lastName, password, password2, passwordsMatch, pending]);
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -105,15 +57,12 @@ export default function RegisterPage() {
     setError("");
 
     try {
-      const api = axios.create({
-        baseURL: getApiBase(),
-        timeout: 20000,
-      });
+      const api = axios.create({ baseURL: getApiBase(), timeout: 20000 });
 
-      // ✅ СТРОГО ПО SWAGGER: только эти поля
       await api.post("/auth/register/", {
         email: str(email),
-        username: swaggerUsername,
+        first_name: str(firstName),
+        last_name: str(lastName),
         phone: str(phone) || "",
         password,
         password2,
@@ -125,22 +74,18 @@ export default function RegisterPage() {
       const d = e?.response?.data;
 
       console.log("REGISTER ERROR:", status, d);
-      console.log("REGISTER ERROR JSON:", JSON.stringify(d, null, 2));
 
-      if (typeof d === "string") {
-        setError(d);
-        return;
-      }
-      if (d?.detail) {
-        setError(String(d.detail));
-        return;
-      }
+      if (typeof d === "string") return setError(d);
+      if (d?.detail) return setError(String(d.detail));
 
       const emailErr = pickFirstFieldError(d, "email");
       if (emailErr) return setError(emailErr);
 
-      const usernameErr = pickFirstFieldError(d, "username");
-      if (usernameErr) return setError(usernameErr);
+      const fnErr = pickFirstFieldError(d, "first_name");
+      if (fnErr) return setError(fnErr);
+
+      const lnErr = pickFirstFieldError(d, "last_name");
+      if (lnErr) return setError(lnErr);
 
       const phoneErr = pickFirstFieldError(d, "phone");
       if (phoneErr) return setError(phoneErr);
@@ -158,13 +103,18 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[var(--sb-bg)] px-4">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Регистрация</CardTitle>
+    <div className="min-h-screen bg-white text-black flex items-center justify-center px-4">
+      <Card className="w-full max-w-md rounded-2xl border border-black/10 bg-white shadow-[0_18px_60px_rgba(0,0,0,0.10)]">
+        <CardHeader className="p-6 sm:p-8">
+          <CardTitle className="text-2xl sm:text-3xl font-extrabold">
+            Регистрация
+          </CardTitle>
+          <div className="text-sm text-black/60">
+            Создайте аккаунт для доступа к курсам
+          </div>
         </CardHeader>
 
-        <CardContent>
+        <CardContent className="p-6 pt-0 sm:p-8 sm:pt-0">
           <form onSubmit={onSubmit} className="space-y-4">
             {error && (
               <Alert variant="destructive">
@@ -172,93 +122,89 @@ export default function RegisterPage() {
               </Alert>
             )}
 
-            {/* EMAIL */}
-            <div>
-              <label className="text-sm block mb-1">Email *</label>
+            <div className="space-y-2">
+              <label className="text-sm text-black/80">Email *</label>
               <Input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                autoComplete="email"
-                required
                 disabled={pending}
+                className="h-11 bg-white border-black/15 text-black rounded-xl"
               />
             </div>
 
-            {/* FULL NAME */}
-            <div>
-              <label className="text-sm block mb-1">Имя и фамилия *</label>
-              <Input
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Расул Камалов"
-                required
-                disabled={pending}
-              />
-              {!fullNameValid && fullName && (
-                <div className="text-xs text-red-500 mt-1">
-                  Только буквы и пробелы. Цифры и символы запрещены.
-                </div>
-              )}
+            {/* ✅ 2 поля */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <label className="text-sm text-black/80">Имя *</label>
+                <Input
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  disabled={pending}
+                  className="h-11 bg-white border-black/15 text-black rounded-xl"
+                />
+              </div>
 
-              {/* показываем что реально уйдет на бек */}
-              {fullNameValid && fullName && (
-                <div className="text-xs text-[var(--sb-muted)] mt-1">
-                  
-                </div>
-              )}
+              <div className="space-y-2">
+                <label className="text-sm text-black/80">Фамилия *</label>
+                <Input
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  disabled={pending}
+                  className="h-11 bg-white border-black/15 text-black rounded-xl"
+                />
+              </div>
             </div>
 
-            {/* PHONE */}
-            <div>
-              <label className="text-sm block mb-1">Номер телефона</label>
+            <div className="space-y-2">
+              <label className="text-sm text-black/80">Номер телефона</label>
               <Input
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="+996700000000"
                 disabled={pending}
+                className="h-11 bg-white border-black/15 text-black rounded-xl"
               />
             </div>
 
-            {/* PASSWORD */}
-            <div>
-              <label className="text-sm block mb-1">Пароль *</label>
+            <div className="space-y-2">
+              <label className="text-sm text-black/80">Пароль *</label>
               <Input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                autoComplete="new-password"
-                required
                 disabled={pending}
+                className="h-11 bg-white border-black/15 text-black rounded-xl"
               />
               {password && password.length < 8 && (
-                <div className="text-xs text-red-500 mt-1">Минимум 8 символов</div>
+                <div className="text-xs text-red-600">Минимум 8 символов</div>
               )}
             </div>
 
-            {/* PASSWORD2 */}
-            <div>
-              <label className="text-sm block mb-1">Повторите пароль *</label>
+            <div className="space-y-2">
+              <label className="text-sm text-black/80">Повторите пароль *</label>
               <Input
                 type="password"
                 value={password2}
                 onChange={(e) => setPassword2(e.target.value)}
-                autoComplete="new-password"
-                required
                 disabled={pending}
+                className="h-11 bg-white border-black/15 text-black rounded-xl"
               />
               {password2 && !passwordsMatch && (
-                <div className="text-xs text-red-500 mt-1">Пароли не совпадают</div>
+                <div className="text-xs text-red-600">Пароли не совпадают</div>
               )}
             </div>
 
-            <Button type="submit" className="w-full" disabled={!canSubmit}>
+            <Button
+              type="submit"
+              disabled={!canSubmit}
+              className="w-full h-11 rounded-xl bg-[#FFD70A] text-black font-bold hover:bg-[#ffde33]"
+            >
               {pending ? "Регистрация..." : "Зарегистрироваться"}
             </Button>
 
-            <div className="text-sm text-center text-[var(--sb-muted)]">
+            <div className="text-sm text-center text-black/60">
               Уже есть аккаунт?{" "}
-              <Link to="/login" className="text-[var(--sb-accent)] hover:underline">
+              <Link to="/login" className="font-semibold hover:underline">
                 Войти
               </Link>
             </div>
