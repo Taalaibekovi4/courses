@@ -97,15 +97,21 @@ function getCoursePhotoFromAny(obj) {
   return toAbsUrl(raw);
 }
 
+/** ✅ НОРМАЛИЗАЦИЯ courseId урока (самая важная часть) */
 function normalizeLessonCourseId(l) {
+  // варианты:
+  // - lesson.course_id
+  // - lesson.course (number/string)
+  // - lesson.course = { id }
+  // - lesson.courseId
   const c = l?.course;
   const cid =
-    l?.courseId ??
     l?.course_id ??
-    (c && typeof c === "object" ? c.id : c) ??
+    l?.courseId ??
+    (c && typeof c === "object" ? c.id ?? c.pk ?? c.course_id ?? c.courseId : c) ??
     l?.course?.id ??
     "";
-  return String(cid ?? "");
+  return String(cid ?? "").trim();
 }
 
 function pickLessonVideo(obj) {
@@ -118,6 +124,8 @@ function pickLessonVideo(obj) {
     obj?.videoUrl ||
     obj?.video ||
     obj?.url ||
+    obj?.file_url ||
+    obj?.fileUrl ||
     "";
   return String(v || "").trim();
 }
@@ -188,6 +196,22 @@ function getYouTubeId(input) {
   if (live?.[1]) return live[1];
 
   return "";
+}
+
+function isDirectVideoUrl(input) {
+  const v = String(input || "").trim().toLowerCase();
+  if (!v) return false;
+  return (
+    v.startsWith("http://") ||
+    v.startsWith("https://") ||
+    v.startsWith("blob:") ||
+    v.endsWith(".mp4") ||
+    v.endsWith(".webm") ||
+    v.endsWith(".ogg") ||
+    v.includes(".mp4?") ||
+    v.includes(".webm?") ||
+    v.includes(".ogg?")
+  );
 }
 
 async function tryGet(apiInstance, path, config = {}) {
@@ -343,6 +367,10 @@ export function CoursePage() {
   // ✅ чтобы iframe можно было “перезапустить” со звуком после клика
   const [iframeKey, setIframeKey] = useState(0);
 
+  // ✅ для direct video preview
+  const htmlVideoRef = useRef(null);
+  const htmlVideoTimerRef = useRef(null);
+
   const tariffsRef = useRef(null);
 
   const ytMountRef = useRef(null);
@@ -446,23 +474,29 @@ export function CoursePage() {
     loadTariffs();
   }, [loadTariffs]);
 
+  /** ✅ ГЛАВНОЕ ИСПРАВЛЕНИЕ: уроки всегда берем ТОЛЬКО для этого курса */
   const loadLessons = useCallback(async () => {
-    const cid = getCourseId(course);
+    const cid = String(getCourseId(course) ?? courseId ?? "").trim();
     if (!cid) return;
 
     setLessonsLoading(true);
     setLessonsError("");
 
     try {
+      // 1) если уроки вложены в /courses/{id}/, используем их, но фильтруем строго по courseId
       const embedded = extractLessonsFromCourse(course);
       if (embedded.length) {
-        let filtered = embedded.filter((l) => String(l.courseId || "") === String(cid));
-        if (!filtered.length) filtered = embedded;
-        filtered.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
-        setLessons(filtered);
+        const filtered = embedded.filter((l) => String(l.courseId || "") === String(cid));
+        const finalList = filtered.length ? filtered : []; // ❗ НЕ берем "все", если не совпало
+        finalList.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+        setLessons(finalList);
+        if (courseLessonsCount > 0 && finalList.length === 0) {
+          setLessonsError("Уроки есть, но у вложенных уроков не совпадает course_id. Проверь поле course у уроков.");
+        }
         return;
       }
 
+      // 2) иначе грузим с эндпоинта уроков строго с фильтром
       let res = await tryGet(publicApi, "/lessons/", { params: { course_id: cid } });
       let arr = res.ok ? extractArrayAny(res.data) : [];
 
@@ -473,10 +507,18 @@ export function CoursePage() {
 
       if (arr.length) {
         const normalized = normalizeLessonsList(arr);
-        let filtered = normalized.filter((l) => String(l.courseId || "") === String(cid));
-        if (!filtered.length) filtered = normalized;
+
+        // ❗ строгий фильтр: берем только те, у кого courseId совпал
+        const filtered = normalized.filter((l) => String(l.courseId || "") === String(cid));
+
         filtered.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
         setLessons(filtered);
+
+        if (courseLessonsCount > 0 && filtered.length === 0) {
+          setLessonsError(
+            "Уроки в курсе есть, но сервер вернул уроки без корректного course/course_id. Проверь сериализатор уроков."
+          );
+        }
         return;
       }
 
@@ -489,7 +531,7 @@ export function CoursePage() {
     } finally {
       setLessonsLoading(false);
     }
-  }, [course, publicApi, courseLessonsCount]);
+  }, [course, publicApi, courseLessonsCount, courseId]);
 
   useEffect(() => {
     if (didLoadLessonsRef.current) return;
@@ -517,6 +559,13 @@ export function CoursePage() {
     }
   }, []);
 
+  const stopHtmlVideoTimer = useCallback(() => {
+    if (htmlVideoTimerRef.current) {
+      clearInterval(htmlVideoTimerRef.current);
+      htmlVideoTimerRef.current = null;
+    }
+  }, []);
+
   const destroyYouTubePlayer = useCallback(() => {
     stopYouTubeTimer();
     const p = ytPlayerRef.current;
@@ -528,6 +577,17 @@ export function CoursePage() {
     }
   }, [stopYouTubeTimer]);
 
+  const destroyHtmlVideo = useCallback(() => {
+    stopHtmlVideoTimer();
+    const v = htmlVideoRef.current;
+    if (v) {
+      try {
+        v.pause();
+        v.currentTime = 0;
+      } catch (_) {}
+    }
+  }, [stopHtmlVideoTimer]);
+
   const closePreview = useCallback(() => {
     setIsPreviewOpen(false);
     setIsPaywallOpen(false);
@@ -536,8 +596,10 @@ export function CoursePage() {
     setIsVideoEnded(false);
     setFallbackIframeId("");
     setIsMuted(true);
+    setIframeKey((k) => k + 1);
     destroyYouTubePlayer();
-  }, [destroyYouTubePlayer]);
+    destroyHtmlVideo();
+  }, [destroyYouTubePlayer, destroyHtmlVideo]);
 
   const openPreview = useCallback((lessonId) => {
     setActiveLessonId(lessonId);
@@ -552,8 +614,11 @@ export function CoursePage() {
   }, []);
 
   useEffect(() => {
-    return () => destroyYouTubePlayer();
-  }, [destroyYouTubePlayer]);
+    return () => {
+      destroyYouTubePlayer();
+      destroyHtmlVideo();
+    };
+  }, [destroyYouTubePlayer, destroyHtmlVideo]);
 
   useEffect(() => {
     if (!isPreviewOpen) return;
@@ -592,6 +657,23 @@ export function CoursePage() {
     stopYouTubeTimer();
     ytTimerRef.current = setInterval(clampPreviewYouTube, 200);
   }, [clampPreviewYouTube, stopYouTubeTimer]);
+
+  const startHtmlVideoTimer = useCallback(() => {
+    stopHtmlVideoTimer();
+    htmlVideoTimerRef.current = setInterval(() => {
+      const v = htmlVideoRef.current;
+      if (!v) return;
+      const t = Number(v.currentTime || 0);
+      if (t >= PREVIEW_SECONDS) {
+        try {
+          v.pause();
+          v.currentTime = PREVIEW_SECONDS;
+        } catch (_) {}
+        setIsPaywallOpen(true);
+        stopHtmlVideoTimer();
+      }
+    }, 200);
+  }, [stopHtmlVideoTimer]);
 
   const initYouTubePlayer = useCallback(
     async (videoId) => {
@@ -685,6 +767,17 @@ export function CoursePage() {
       return;
     }
 
+    // html video
+    const v = htmlVideoRef.current;
+    if (v) {
+      try {
+        v.muted = false;
+        v.volume = 1;
+        v.play();
+      } catch (_) {}
+      return;
+    }
+
     // fallback iframe: перезапускаем iframe уже без mute (клик был => обычно стартует со звуком)
     if (fallbackIframeId) {
       setIframeKey((k) => k + 1);
@@ -704,32 +797,56 @@ export function CoursePage() {
       setFallbackIframeId("");
       setIsMuted(true);
 
+      destroyYouTubePlayer();
+      destroyHtmlVideo();
+
       const l = activeLesson;
       if (!l) {
         setVideoError("Урок не найден.");
         return;
       }
 
-      const raw = String(l?.videoUrl || pickLessonVideo(l?._raw) || "").trim();
-      const ytId = getYouTubeId(raw);
+      const rawOriginal = String(l?.videoUrl || pickLessonVideo(l?._raw) || "").trim();
+      const raw = isDirectVideoUrl(rawOriginal) ? toAbsUrl(rawOriginal) : rawOriginal;
 
       if (!raw) {
-        setVideoError("В этом уроке нет видео (youtube_video_id пустой на сервере).");
-        return;
-      }
-      if (!ytId) {
-        setVideoError("Неверная ссылка/ID. Нужен YouTube URL или videoId (11 символов).");
+        setVideoError("В этом уроке нет видео (youtube_video_id / video_url пустой на сервере).");
         return;
       }
 
+      const ytId = getYouTubeId(raw);
+      const isDirect = isDirectVideoUrl(raw) && !ytId;
+
       if (!alive) return;
+
+      // direct mp4/webm/ogg
+      if (isDirect) {
+        setIsVideoReady(true);
+        setVideoError("");
+        setTimeout(() => startHtmlVideoTimer(), 50);
+        return;
+      }
+
+      // youtube
+      if (!ytId) {
+        setVideoError("Неверная ссылка/ID. Нужен YouTube URL или videoId (11 символов) или прямой mp4/webm/ogg.");
+        return;
+      }
+
       setTimeout(() => initYouTubePlayer(ytId), 50);
     })();
 
     return () => {
       alive = false;
     };
-  }, [isPreviewOpen, activeLesson, initYouTubePlayer]);
+  }, [
+    isPreviewOpen,
+    activeLesson,
+    initYouTubePlayer,
+    destroyYouTubePlayer,
+    destroyHtmlVideo,
+    startHtmlVideoTimer,
+  ]);
 
   const scrollToTariffs = useCallback(() => {
     const el = tariffsRef.current;
@@ -1019,22 +1136,55 @@ export function CoursePage() {
               <div className="relative bg-gray-950">
                 <div className="relative w-full" style={{ paddingBottom: "56.25%" }}>
                   {/* VIDEO */}
-                  {fallbackIframeId ? (
-                    <iframe
-                      key={iframeKey}
-                      title="lesson-video"
-                      className="absolute inset-0 w-full h-full"
-                      src={`https://www.youtube-nocookie.com/embed/${fallbackIframeId}?autoplay=1&mute=${
-                        isMuted ? 1 : 0
-                      }&rel=0&modestbranding=1&playsinline=1`}
-                      allow="autoplay; encrypted-media; picture-in-picture"
-                      allowFullScreen
-                    />
-                  ) : (
-                    <div ref={ytMountRef} className="absolute inset-0 w-full h-full" />
-                  )}
+                  {(() => {
+                    const rawOriginal = String(activeLesson?.videoUrl || pickLessonVideo(activeLesson?._raw) || "").trim();
+                    const raw = isDirectVideoUrl(rawOriginal) ? toAbsUrl(rawOriginal) : rawOriginal;
+                    const ytId = getYouTubeId(raw);
+                    const isDirect = isDirectVideoUrl(raw) && !ytId;
 
-                  {/* ✅ SHIELD: видео НЕ кликабельным (но кнопка звука работает выше) */}
+                    if (ytId) {
+                      if (fallbackIframeId) {
+                        return (
+                          <iframe
+                            key={iframeKey}
+                            title="lesson-video"
+                            className="absolute inset-0 w-full h-full"
+                            src={`https://www.youtube-nocookie.com/embed/${fallbackIframeId}?autoplay=1&mute=${
+                              isMuted ? 1 : 0
+                            }&rel=0&modestbranding=1&playsinline=1`}
+                            allow="autoplay; encrypted-media; picture-in-picture"
+                            allowFullScreen
+                          />
+                        );
+                      }
+                      return <div ref={ytMountRef} className="absolute inset-0 w-full h-full" />;
+                    }
+
+                    if (isDirect) {
+                      return (
+                        <video
+                          key={iframeKey}
+                          ref={htmlVideoRef}
+                          src={raw}
+                          className="absolute inset-0 w-full h-full object-cover bg-black"
+                          muted={isMuted}
+                          controls={false}
+                          playsInline
+                          autoPlay
+                          preload="metadata"
+                          onCanPlay={() => setIsVideoReady(true)}
+                          onError={() => {
+                            setVideoError("Не удалось воспроизвести видео файл.");
+                            setIsVideoReady(false);
+                          }}
+                        />
+                      );
+                    }
+
+                    return null;
+                  })()}
+
+                  {/* ✅ SHIELD: видео НЕ кликабельным (но кнопка звука работает) */}
                   {!videoError && (
                     <div
                       className="absolute inset-0 z-20"
@@ -1047,7 +1197,7 @@ export function CoursePage() {
                     />
                   )}
 
-                  {/* ✅ BUTTON: включить звук (это действие пользователя => браузер разрешит звук) */}
+                  {/* ✅ BUTTON: включить звук */}
                   {!videoError && isVideoReady && isMuted && (
                     <div className="absolute z-30 left-4 bottom-4">
                       <Button onClick={enableSound} className="gap-2">

@@ -38,18 +38,23 @@ const LS_TEACHER_HW_ARCHIVE = "teacher_hw_archive_v1";
 
 /* =========================
    ✅ ABS URL helper (как в CoursePage)
-   чтобы /media/... работал на сервере
+   + ✅ FIX DEV: /media/... оставляем относительным, чтобы vite proxy работал и CORS не было
    ========================= */
 const API_BASE_RAW =
   (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) || "";
 
 const API_ORIGIN = norm(API_BASE_RAW).replace(/\/api\/?$/i, "").replace(/\/$/, "");
+const IS_DEV = typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV;
 
 function toAbsUrl(url) {
   const u = norm(url);
   if (!u) return "";
   if (/^https?:\/\//i.test(u)) return u;
   if (u.startsWith("//")) return `https:${u}`;
+
+  // ✅ DEV: /media/... пусть останется относительным => запрос пойдет через vite proxy
+  if (IS_DEV && u.startsWith("/media/")) return u;
+
   if (u.startsWith("/")) {
     if (API_ORIGIN) return `${API_ORIGIN}${u}`;
     return u;
@@ -549,7 +554,11 @@ function Modal({ title, isOpen, onClose, children, closeOnOverlay = true }) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" role="dialog" aria-modal="true">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="absolute inset-0 bg-black/60" onClick={closeOnOverlay ? onClose : undefined} />
       <div className="relative z-10 w-full max-w-md bg-white rounded-2xl overflow-hidden shadow-xl border">
         <div className="flex items-center justify-between px-4 py-3 border-b">
@@ -654,10 +663,73 @@ function normalizeHomework(hw) {
   };
 }
 
+/**
+ * ✅ ВАЖНОЕ ИСПРАВЛЕНИЕ ДЛЯ "повторной отправки после rework/declined":
+ * У студента может появляться НОВАЯ попытка по тому же уроку.
+ * Чтобы у учителя НЕ висела старая "rework/declined" сверху — показываем ТОЛЬКО ПОСЛЕДНЮЮ попытку на урок.
+ * Так повторная отправка будет видна как "На проверке" (examination), а старая попытка не мешает.
+ */
+function pickLatestAttemptsByLesson(list) {
+  const arr = Array.isArray(list) ? list : [];
+  const map = new Map(); // lessonId -> hw
+  for (const hw of arr) {
+    const lid = String(hw?.lessonId || "");
+    if (!lid) continue;
+
+    const prev = map.get(lid);
+    if (!prev) {
+      map.set(lid, hw);
+      continue;
+    }
+
+    const a = new Date(hw?.createdAt || 0).getTime();
+    const b = new Date(prev?.createdAt || 0).getTime();
+
+    // если даты нет — подстрахуемся id
+    if (a === b) {
+      const ida = String(hw?.id || "");
+      const idb = String(prev?.id || "");
+      if (ida > idb) map.set(lid, hw);
+    } else if (a > b) {
+      map.set(lid, hw);
+    }
+  }
+  return Array.from(map.values());
+}
+
 function isTeacherCanReview(status) {
   const s = normLow(status);
-  // ✅ API: examination / rework можно проверять
-  return s === "examination" || s === "rework" || !s;
+  // ✅ можно проверять "на проверке", "на доработке", "отклонено"
+  // (часто это удобно: поменять решение или принять исправленное)
+  return s === "examination" || s === "rework" || s === "declined" || !s;
+}
+
+/* =========================
+   ✅ NEW COURSE validation helper
+   Категория ОБЯЗАТЕЛЬНАЯ
+   ========================= */
+function validateNewCourseForm({ title, categoryId, description, photo }) {
+  const errors = { title: "", category: "", description: "", photo: "" };
+
+  const t = norm(title);
+  if (!t) errors.title = "Название курса обязательно";
+  else if (t.length < 3) errors.title = "Минимум 3 символа";
+
+  const cat = norm(categoryId);
+  if (!cat) errors.category = "Выберите категорию";
+
+  const d = norm(description);
+  if (d.length > 2000) errors.description = "Слишком длинное описание (макс 2000 символов)";
+
+  if (photo) {
+    const isImage = photo.type?.startsWith("image/");
+    if (!isImage) errors.photo = "Можно загрузить только изображение";
+    const maxMb = 5;
+    if (photo.size > maxMb * 1024 * 1024) errors.photo = `Максимум ${maxMb}MB`;
+  }
+
+  const ok = !errors.title && !errors.category && !errors.description && !errors.photo;
+  return { ok, errors };
 }
 
 /* =========================
@@ -716,6 +788,14 @@ export function TeacherDashboard() {
   const [newCourseCategoryId, setNewCourseCategoryId] = useState("");
   const [newCourseDescription, setNewCourseDescription] = useState("");
   const [newCoursePhoto, setNewCoursePhoto] = useState(null);
+
+  // ✅ validation errors for NEW COURSE
+  const [newCourseErrors, setNewCourseErrors] = useState({
+    title: "",
+    category: "",
+    description: "",
+    photo: "",
+  });
 
   // EDIT COURSE modal
   const [isEditCourseOpen, setIsEditCourseOpen] = useState(false);
@@ -827,15 +907,11 @@ export function TeacherDashboard() {
 
   /* =========================================================
      ✅ ЖЁСТКО: показываем ТОЛЬКО свои курсы
-     1) если есть teacher поля в курсах — фильтруем по ним
-     2) если teacher поля нет/пусто — фильтруем по teacherLessons.course
-     3) если и там пусто — показываем 0 курсов (НЕ все!)
      ========================================================= */
   const teacherCourses = useMemo(() => {
     const uid = String(user.id);
     const list = normalizedCourses;
 
-    // 1) пробуем по teacher полям
     const byTeacherField = list.filter((c) => {
       const t =
         c?.teacherId ??
@@ -850,7 +926,6 @@ export function TeacherDashboard() {
 
     if (byTeacherField.length > 0) return byTeacherField;
 
-    // 2) фоллбек по teacherLessons (course id)
     const myCourseIds = new Set(
       (Array.isArray(normalizedLessons) ? normalizedLessons : [])
         .map((l) => normalizeLessonCourseId(l))
@@ -858,8 +933,7 @@ export function TeacherDashboard() {
         .map(String)
     );
 
-    if (myCourseIds.size === 0) return []; // ✅ важно: не показывать чужие курсы
-
+    if (myCourseIds.size === 0) return [];
     return list.filter((c) => myCourseIds.has(String(normalizeCourseId(c))));
   }, [normalizedCourses, normalizedLessons, user.id]);
 
@@ -873,13 +947,50 @@ export function TeacherDashboard() {
     return normalizedHomeworks.filter((hw) => teacherCourseIds.has(String(hw.courseId)));
   }, [normalizedHomeworks, teacherCourseIds]);
 
-  const teacherHomeworksActive = useMemo(() => {
+  const teacherHomeworksActiveRaw = useMemo(() => {
     return homeworksSafe.filter((hw) => !archivedIds.has(String(hw.id)));
   }, [homeworksSafe, archivedIds]);
 
-  const teacherHomeworksArchived = useMemo(() => {
+  const teacherHomeworksArchivedRaw = useMemo(() => {
     return homeworksSafe.filter((hw) => archivedIds.has(String(hw.id)));
   }, [homeworksSafe, archivedIds]);
+
+  /**
+   * ✅ ГЛАВНОЕ:
+   * Показываем учителю только последнюю попытку по каждому уроку у каждого студента.
+   * Тогда после "rework/declined" студент отправит заново — новая попытка появится как "На проверке".
+   */
+  const teacherHomeworksActive = useMemo(() => {
+    const map = new Map(); // studentId -> list
+    for (const hw of teacherHomeworksActiveRaw) {
+      const sid = String(hw.userId || "unknown");
+      if (!map.has(sid)) map.set(sid, []);
+      map.get(sid).push(hw);
+    }
+    const out = [];
+    for (const [, list] of map.entries()) {
+      const latest = pickLatestAttemptsByLesson(list);
+      out.push(...latest);
+    }
+    return out;
+  }, [teacherHomeworksActiveRaw]);
+
+  const teacherHomeworksArchived = useMemo(() => {
+    // в архиве тоже лучше показывать последнюю по уроку (чтобы не было каши),
+    // но если хочешь видеть ВСЕ — замени на teacherHomeworksArchivedRaw.
+    const map = new Map(); // studentId -> list
+    for (const hw of teacherHomeworksArchivedRaw) {
+      const sid = String(hw.userId || "unknown");
+      if (!map.has(sid)) map.set(sid, []);
+      map.get(sid).push(hw);
+    }
+    const out = [];
+    for (const [, list] of map.entries()) {
+      const latest = pickLatestAttemptsByLesson(list);
+      out.push(...latest);
+    }
+    return out;
+  }, [teacherHomeworksArchivedRaw]);
 
   const pendingCount = teacherHomeworksActive.filter((hw) => {
     const s = normLow(hw.status);
@@ -906,11 +1017,18 @@ export function TeacherDashboard() {
       if (!map.has(sid)) map.set(sid, []);
       map.get(sid).push(hw);
     }
+
     for (const [sid, arr] of map.entries()) {
       arr.sort((a, b) => {
+        // "На проверке" выше остальных
         const pa = normLow(a.status) === "examination" || !normLow(a.status) ? 0 : 1;
         const pb = normLow(b.status) === "examination" || !normLow(b.status) ? 0 : 1;
-        return pa - pb;
+        if (pa !== pb) return pa - pb;
+
+        // потом по дате (свежее выше)
+        const ta = new Date(a.createdAt || 0).getTime();
+        const tb = new Date(b.createdAt || 0).getTime();
+        return tb - ta;
       });
       map.set(sid, arr);
     }
@@ -1113,15 +1231,26 @@ export function TeacherDashboard() {
     setNewCourseCategoryId("");
     setNewCourseDescription("");
     setNewCoursePhoto(null);
+    setNewCourseErrors({ title: "", category: "", description: "", photo: "" });
     setIsAddCourseOpen(true);
   }
 
   async function createNewCourse() {
-    const title = norm(newCourseTitle);
-    if (!title) {
-      toast.error("Введите название курса");
+    // ✅ front validation (до запроса)
+    const v = validateNewCourseForm({
+      title: newCourseTitle,
+      categoryId: newCourseCategoryId,
+      description: newCourseDescription,
+      photo: newCoursePhoto,
+    });
+
+    setNewCourseErrors(v.errors);
+
+    if (!v.ok) {
+      toast.error("Заполните обязательные поля");
       return;
     }
+
     if (!addCourse) {
       toast.error("addCourse не подключён в DataContext");
       return;
@@ -1129,13 +1258,18 @@ export function TeacherDashboard() {
 
     try {
       const payload = {
-        title,
+        title: norm(newCourseTitle),
         description: norm(newCourseDescription),
-        category: newCourseCategoryId || undefined,
+        category: newCourseCategoryId, // ✅ обязательное
         photo: newCoursePhoto || undefined,
       };
 
       const res = await addCourse(payload);
+
+      if (res?.ok === false) {
+        toast.error(res?.error || "Не удалось добавить курс");
+        return;
+      }
 
       const cid =
         typeof res === "number" || typeof res === "string"
@@ -1143,7 +1277,7 @@ export function TeacherDashboard() {
           : res?.id ?? res?.data?.id ?? res?.course_id ?? null;
 
       if (!cid) {
-        toast.error(res?.error || "Не удалось добавить курс");
+        toast.error("Не удалось добавить курс (id не вернулся)");
         return;
       }
 
@@ -1211,7 +1345,7 @@ export function TeacherDashboard() {
   }
 
   function askDeleteCourse(course) {
-    const cid = normalizeCourseId(course);
+    const cid = String(normalizeCourseId(course) || "").trim();
     setConfirmDeleteCourse({
       open: true,
       courseId: cid,
@@ -1221,7 +1355,8 @@ export function TeacherDashboard() {
 
   async function confirmDeleteCourseNow() {
     const { courseId } = confirmDeleteCourse;
-    if (!courseId) return;
+    const cidRaw = String(courseId || "").trim();
+    if (!cidRaw) return;
 
     if (!deleteCourse) {
       toast.error("deleteCourse не подключён в DataContext");
@@ -1229,17 +1364,26 @@ export function TeacherDashboard() {
     }
 
     try {
-      const res = await deleteCourse(courseId);
+      let res = await deleteCourse(cidRaw);
+
+      if (res?.ok === false) {
+        const cidNum = Number(cidRaw);
+        if (Number.isFinite(cidNum)) {
+          res = await deleteCourse(cidNum);
+        }
+      }
+
       if (res?.ok === false) {
         toast.error(res?.error || "Не удалось удалить курс");
         return;
       }
+
       toast.success("Курс удалён");
       setConfirmDeleteCourse({ open: false, courseId: "", courseTitle: "" });
       setIsEditCourseOpen(false);
-      await loadPublic?.();
 
-      setExpandedCourse((prev) => (String(prev) === String(courseId) ? null : prev));
+      await Promise.all([loadPublic?.(), loadTeacherLessons?.(), loadTeacherHomeworks?.()]);
+      setExpandedCourse((prev) => (String(prev) === cidRaw ? null : prev));
     } catch (e) {
       console.error(e);
       toast.error("Ошибка удаления курса");
@@ -1663,12 +1807,10 @@ export function TeacherDashboard() {
                         type="button"
                       >
                         <div className="text-left">
-                          <div className="font-semibold">
-                            {list?.[0]?.studentUsername || "Студент"}{" "}
-                            <span className="text-gray-500 font-normal">({studentId})</span>
-                          </div>
+                          {/* ✅ УБРАЛИ ID В СКОБКАХ: было "radia (12)", стало просто "radia" */}
+                          <div className="font-semibold">{list?.[0]?.studentUsername || "Студент"}</div>
                           <div className="text-sm text-gray-600">
-                            Всего: {list.length} • На проверке: {submitted}
+                            Всего (последние попытки): {list.length} • На проверке: {submitted}
                           </div>
                         </div>
                         <ChevronDown className={`w-5 h-5 transition ${isOpen ? "rotate-180" : ""}`} />
@@ -1888,7 +2030,11 @@ export function TeacherDashboard() {
                                         Статус
                                       </Button>
 
-                                      <Button variant="outline" size="sm" onClick={() => openEditLessonModal(l)}>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => openEditLessonModal(l)}
+                                      >
                                         <Pencil className="w-4 h-4 mr-2" />
                                         Редактировать
                                       </Button>
@@ -2061,10 +2207,8 @@ export function TeacherDashboard() {
                         type="button"
                       >
                         <div className="text-left">
-                          <div className="font-semibold">
-                            {list?.[0]?.studentUsername || "Студент"}{" "}
-                            <span className="text-gray-500 font-normal">({studentId})</span>
-                          </div>
+                          {/* ✅ УБРАЛИ ID */}
+                          <div className="font-semibold">{list?.[0]?.studentUsername || "Студент"}</div>
                           <div className="text-sm text-gray-600">В архиве: {list.length}</div>
                         </div>
                         <ChevronDown className={`w-5 h-5 transition ${isOpen ? "rotate-180" : ""}`} />
@@ -2083,7 +2227,9 @@ export function TeacherDashboard() {
                                   <div>
                                     <div className="font-semibold">
                                       {hw.courseTitle || "Курс"} •{" "}
-                                      {normalizeLessonTitle(lesson) || hw.lessonTitle || `Урок ${hw.lessonId}`}
+                                      {normalizeLessonTitle(lesson) ||
+                                        hw.lessonTitle ||
+                                        `Урок ${hw.lessonId}`}
                                     </div>
                                     <div className="text-xs text-gray-500 mt-1">
                                       Проверено:{" "}
@@ -2125,40 +2271,78 @@ export function TeacherDashboard() {
           </TabsContent>
         </Tabs>
 
-        {/* MODAL: добавить курс (+ фото) */}
+        {/* MODAL: добавить курс (+ фото) + ✅ ВАЛИДАЦИЯ */}
         <Modal
           title="Новый курс"
           isOpen={isAddCourseOpen}
-          onClose={() => setIsAddCourseOpen(false)}
+          onClose={() => {
+            setIsAddCourseOpen(false);
+            setNewCourseErrors({ title: "", category: "", description: "", photo: "" });
+          }}
           closeOnOverlay={false}
         >
           <div className="space-y-3">
+            {/* Название */}
             <div className="space-y-1">
               <label className="text-sm">Название курса</label>
-              <Input value={newCourseTitle} onChange={(e) => setNewCourseTitle(e.target.value)} placeholder="React с нуля" />
+              <Input
+                value={newCourseTitle}
+                onChange={(e) => {
+                  setNewCourseTitle(e.target.value);
+                  if (newCourseErrors.title) setNewCourseErrors((p) => ({ ...p, title: "" }));
+                }}
+                placeholder="React с нуля"
+                className={newCourseErrors.title ? "border-red-500 focus-visible:ring-red-500" : ""}
+              />
+              {newCourseErrors.title ? (
+                <div className="text-xs text-red-600">{newCourseErrors.title}</div>
+              ) : null}
             </div>
 
+            {/* Описание */}
             <div className="space-y-1">
               <label className="text-sm">Описание (опционально)</label>
               <Textarea
                 rows={3}
                 value={newCourseDescription}
-                onChange={(e) => setNewCourseDescription(e.target.value)}
+                onChange={(e) => {
+                  setNewCourseDescription(e.target.value);
+                  if (newCourseErrors.description)
+                    setNewCourseErrors((p) => ({ ...p, description: "" }));
+                }}
                 placeholder="Коротко о курсе"
+                className={newCourseErrors.description ? "border-red-500 focus-visible:ring-red-500" : ""}
               />
+              {newCourseErrors.description ? (
+                <div className="text-xs text-red-600">{newCourseErrors.description}</div>
+              ) : null}
             </div>
 
+            {/* Категория (обязательная) */}
             <div className="space-y-1">
-              <label className="text-sm">Категория (опционально)</label>
-              <SearchableSelectSingle
-                value={newCourseCategoryId}
-                onChange={(v) => setNewCourseCategoryId(v)}
-                options={categoriesOptions}
-                placeholder="Без категории"
-                searchPlaceholder="Найти категорию..."
-              />
+              <label className="text-sm">
+                Категория <span className="text-red-600">*</span>
+              </label>
+
+              <div className={newCourseErrors.category ? "rounded-md ring-2 ring-red-500" : ""}>
+                <SearchableSelectSingle
+                  value={newCourseCategoryId}
+                  onChange={(v) => {
+                    setNewCourseCategoryId(v);
+                    if (newCourseErrors.category) setNewCourseErrors((p) => ({ ...p, category: "" }));
+                  }}
+                  options={categoriesOptions}
+                  placeholder="Выберите категорию"
+                  searchPlaceholder="Найти категорию..."
+                />
+              </div>
+
+              {newCourseErrors.category ? (
+                <div className="text-xs text-red-600">{newCourseErrors.category}</div>
+              ) : null}
             </div>
 
+            {/* Фото */}
             <div className="space-y-1">
               <label className="text-sm">Картинка курса (опционально)</label>
               <label className="block">
@@ -2169,23 +2353,40 @@ export function TeacherDashboard() {
                   onChange={(e) => {
                     const f = e.target.files?.[0] || null;
                     setNewCoursePhoto(f);
+                    if (newCourseErrors.photo) setNewCourseErrors((p) => ({ ...p, photo: "" }));
                     e.target.value = "";
                   }}
                 />
-                <div className="w-full border rounded-md px-3 py-2 bg-white hover:bg-gray-50 transition flex items-center gap-2 cursor-pointer">
+                <div
+                  className={[
+                    "w-full border rounded-md px-3 py-2 bg-white hover:bg-gray-50 transition flex items-center gap-2 cursor-pointer",
+                    newCourseErrors.photo ? "border-red-500" : "",
+                  ].join(" ")}
+                >
                   <ImageIcon className="w-4 h-4 text-gray-600" />
                   <span className="text-sm text-gray-700">
                     {newCoursePhoto ? newCoursePhoto.name : "Выбрать картинку"}
                   </span>
                 </div>
               </label>
+
+              {newCourseErrors.photo ? (
+                <div className="text-xs text-red-600">{newCourseErrors.photo}</div>
+              ) : null}
             </div>
 
             <div className="flex gap-3">
               <Button onClick={createNewCourse} className="w-full">
                 Добавить
               </Button>
-              <Button variant="outline" onClick={() => setIsAddCourseOpen(false)} className="w-full">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsAddCourseOpen(false);
+                  setNewCourseErrors({ title: "", category: "", description: "", photo: "" });
+                }}
+                className="w-full"
+              >
                 Закрыть
               </Button>
             </div>
@@ -2202,13 +2403,20 @@ export function TeacherDashboard() {
           <div className="space-y-3">
             {editCourseForm.photoUrl ? (
               <div className="rounded-xl overflow-hidden border bg-black">
-                <img src={toAbsUrl(editCourseForm.photoUrl)} alt="course" className="w-full h-[140px] object-cover" />
+                <img
+                  src={toAbsUrl(editCourseForm.photoUrl)}
+                  alt="course"
+                  className="w-full h-[140px] object-cover"
+                />
               </div>
             ) : null}
 
             <div className="space-y-1">
               <label className="text-sm">Название</label>
-              <Input value={editCourseForm.title} onChange={(e) => setEditCourseForm((p) => ({ ...p, title: e.target.value }))} />
+              <Input
+                value={editCourseForm.title}
+                onChange={(e) => setEditCourseForm((p) => ({ ...p, title: e.target.value }))}
+              />
             </div>
 
             <div className="space-y-1">
@@ -2277,13 +2485,26 @@ export function TeacherDashboard() {
         </Modal>
 
         {/* MODAL: редактировать урок */}
-        <Modal title="Редактировать урок" isOpen={isEditLessonOpen} onClose={closeEditLessonModal} closeOnOverlay={false}>
+        <Modal
+          title="Редактировать урок"
+          isOpen={isEditLessonOpen}
+          onClose={closeEditLessonModal}
+          closeOnOverlay={false}
+        >
           <div className="space-y-4">
-            <VideoPreview source={editLessonForm.videoPreviewUrl || editLessonForm.backendVideo} heightClass="h-[160px]" />
+            <VideoPreview
+              source={editLessonForm.videoPreviewUrl || editLessonForm.backendVideo}
+              heightClass="h-[160px]"
+            />
 
             <div className="flex items-center justify-between gap-2">
               <YouTubeStatusBadge status={editLessonForm.youtube_status} error={editLessonForm.youtube_error} />
-              <Button variant="outline" size="sm" onClick={() => refreshOneLessonStatus(editLessonId)} disabled={!editLessonId}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refreshOneLessonStatus(editLessonId)}
+                disabled={!editLessonId}
+              >
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Обновить
               </Button>
@@ -2292,7 +2513,10 @@ export function TeacherDashboard() {
             <div className="grid md:grid-cols-2 gap-4">
               <div className="space-y-1">
                 <label className="text-sm">Название</label>
-                <Input value={editLessonForm.title} onChange={(e) => setEditLessonForm((p) => ({ ...p, title: e.target.value }))} />
+                <Input
+                  value={editLessonForm.title}
+                  onChange={(e) => setEditLessonForm((p) => ({ ...p, title: e.target.value }))}
+                />
               </div>
 
               <div className="space-y-1">
@@ -2308,7 +2532,11 @@ export function TeacherDashboard() {
 
             <div className="space-y-1">
               <label className="text-sm">Описание</label>
-              <Textarea rows={3} value={editLessonForm.description} onChange={(e) => setEditLessonForm((p) => ({ ...p, description: e.target.value }))} />
+              <Textarea
+                rows={3}
+                value={editLessonForm.description}
+                onChange={(e) => setEditLessonForm((p) => ({ ...p, description: e.target.value }))}
+              />
             </div>
 
             <div className="space-y-2">
@@ -2335,7 +2563,13 @@ export function TeacherDashboard() {
 
             <div className="space-y-1">
               <label className="text-sm">Домашнее задание (опционально)</label>
-              <Textarea rows={2} value={editLessonForm.homeworkDescription} onChange={(e) => setEditLessonForm((p) => ({ ...p, homeworkDescription: e.target.value }))} />
+              <Textarea
+                rows={2}
+                value={editLessonForm.homeworkDescription}
+                onChange={(e) =>
+                  setEditLessonForm((p) => ({ ...p, homeworkDescription: e.target.value }))
+                }
+              />
             </div>
 
             <LessonHomeworkMaterialsSingle
@@ -2350,7 +2584,11 @@ export function TeacherDashboard() {
                 Сохранить
               </Button>
 
-              <Button variant="destructive" onClick={() => askDeleteLesson(editLessonId, editLessonForm.title)} className="w-full">
+              <Button
+                variant="destructive"
+                onClick={() => askDeleteLesson(editLessonId, editLessonForm.title)}
+                className="w-full"
+              >
                 <Trash2 className="w-4 h-4 mr-2" />
                 Удалить урок
               </Button>
@@ -2380,7 +2618,11 @@ export function TeacherDashboard() {
 
         {/* Overlay: uploading */}
         {isAddingLesson ? (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center px-4" role="status" aria-live="polite">
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center px-4"
+            role="status"
+            aria-live="polite"
+          >
             <div className="absolute inset-0 bg-black/70" />
             <div className="relative z-10 w-full max-w-md rounded-2xl bg-white shadow-xl border p-6">
               <div className="flex flex-col items-center text-center gap-4">

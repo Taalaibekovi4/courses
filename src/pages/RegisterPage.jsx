@@ -17,13 +17,61 @@ function getApiBase() {
   return str(raw).replace(/\/+$/, "");
 }
 
+/**
+ * Поле "Имя и фамилия" в UI:
+ * - любой язык
+ * - разрешены пробелы
+ * - только буквы
+ * - без цифр и спецсимволов
+ */
+const FULLNAME_REGEX = /^[\p{L}]+(?:\s+[\p{L}]+)*$/u;
+
+/**
+ * Swagger: username должен соответствовать ^[\w.@+-]+$
+ */
 const USERNAME_REGEX = /^[\w.@+-]+$/;
+
+/**
+ * Транслитерация (минимальная) + генерация username под Swagger:
+ * - пробелы -> _
+ * - убираем все кроме [A-Za-z0-9_.@+-]
+ * - если имя не латиница -> fallback user + suffix
+ *
+ * Важно: без бекенда мы НЕ можем хранить "реальное имя" отдельно,
+ * поэтому username неизбежно будет латиницей/slug-ом.
+ */
+function makeSwaggerUsernameFromFullName(fullName) {
+  const clean = str(fullName);
+
+  // заменим пробелы на _
+  let candidate = clean.replace(/\s+/g, "_");
+
+  // уберем всё, что не проходит swagger-regex
+  candidate = candidate.replace(/[^\w.@+-]/g, "");
+
+  // на всякий: если пусто или не валидно — делаем user_xxxx
+  if (!candidate || !USERNAME_REGEX.test(candidate)) {
+    const suffix = Math.random().toString(36).slice(2, 6);
+    candidate = `user_${suffix}`;
+  }
+
+  // ограничение swagger maxLength=150
+  return candidate.slice(0, 150);
+}
+
+function pickFirstFieldError(d, field) {
+  const v = d?.[field];
+  if (!v) return "";
+  if (Array.isArray(v)) return String(v[0] ?? "");
+  if (typeof v === "string") return v;
+  return String(v);
+}
 
 export default function RegisterPage() {
   const navigate = useNavigate();
 
   const [email, setEmail] = useState("");
-  const [username, setUsername] = useState("");
+  const [fullName, setFullName] = useState(""); // UI: Имя и фамилия
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [password2, setPassword2] = useState("");
@@ -31,17 +79,23 @@ export default function RegisterPage() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
-  const usernameValid = useMemo(() => USERNAME_REGEX.test(username), [username]);
+  const fullNameValid = useMemo(() => FULLNAME_REGEX.test(fullName), [fullName]);
   const passwordsMatch = password && password === password2;
 
+  // username который реально пойдет на бек
+  const swaggerUsername = useMemo(
+    () => makeSwaggerUsernameFromFullName(fullName),
+    [fullName]
+  );
+
   const canSubmit = useMemo(() => {
-    if (!str(email) || !str(username) || !password || !password2) return false;
-    if (!usernameValid) return false;
+    if (!str(email) || !str(fullName) || !password || !password2) return false;
+    if (!fullNameValid) return false;
     if (password.length < 8) return false;
     if (!passwordsMatch) return false;
     if (pending) return false;
     return true;
-  }, [email, username, password, password2, usernameValid, passwordsMatch, pending]);
+  }, [email, fullName, password, password2, fullNameValid, passwordsMatch, pending]);
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -51,37 +105,53 @@ export default function RegisterPage() {
     setError("");
 
     try {
-      const api = axios.create({ baseURL: getApiBase(), timeout: 20000 });
+      const api = axios.create({
+        baseURL: getApiBase(),
+        timeout: 20000,
+      });
 
+      // ✅ СТРОГО ПО SWAGGER: только эти поля
       await api.post("/auth/register/", {
         email: str(email),
-        username: str(username),
-        phone: str(phone) || null,
+        username: swaggerUsername,
+        phone: str(phone) || "",
         password,
         password2,
       });
 
       navigate("/login");
     } catch (e) {
+      const status = e?.response?.status;
       const d = e?.response?.data;
+
+      console.log("REGISTER ERROR:", status, d);
+      console.log("REGISTER ERROR JSON:", JSON.stringify(d, null, 2));
 
       if (typeof d === "string") {
         setError(d);
-      } else if (d?.email?.[0]) {
-        setError(d.email[0]);
-      } else if (d?.username?.[0]) {
-        setError(d.username[0]);
-      } else if (d?.phone?.[0]) {
-        setError(d.phone[0]);
-      } else if (d?.password?.[0]) {
-        setError(d.password[0]);
-      } else if (d?.password2?.[0]) {
-        setError(d.password2[0]);
-      } else if (d?.detail) {
-        setError(d.detail);
-      } else {
-        setError("Ошибка регистрации");
+        return;
       }
+      if (d?.detail) {
+        setError(String(d.detail));
+        return;
+      }
+
+      const emailErr = pickFirstFieldError(d, "email");
+      if (emailErr) return setError(emailErr);
+
+      const usernameErr = pickFirstFieldError(d, "username");
+      if (usernameErr) return setError(usernameErr);
+
+      const phoneErr = pickFirstFieldError(d, "phone");
+      if (phoneErr) return setError(phoneErr);
+
+      const passErr = pickFirstFieldError(d, "password");
+      if (passErr) return setError(passErr);
+
+      const pass2Err = pickFirstFieldError(d, "password2");
+      if (pass2Err) return setError(pass2Err);
+
+      setError(status === 400 ? "Ошибка регистрации (проверьте данные)" : "Ошибка регистрации");
     } finally {
       setPending(false);
     }
@@ -115,20 +185,26 @@ export default function RegisterPage() {
               />
             </div>
 
-            {/* USERNAME */}
+            {/* FULL NAME */}
             <div>
-              <label className="text-sm block mb-1">Имя пользователя *</label>
+              <label className="text-sm block mb-1">Имя и фамилия *</label>
               <Input
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="user_name"
-                autoComplete="username"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Расул Камалов"
                 required
                 disabled={pending}
               />
-              {!usernameValid && username && (
+              {!fullNameValid && fullName && (
                 <div className="text-xs text-red-500 mt-1">
-                  Только буквы, цифры и символы @ . + - _
+                  Только буквы и пробелы. Цифры и символы запрещены.
+                </div>
+              )}
+
+              {/* показываем что реально уйдет на бек */}
+              {fullNameValid && fullName && (
+                <div className="text-xs text-[var(--sb-muted)] mt-1">
+                  
                 </div>
               )}
             </div>

@@ -1,28 +1,15 @@
+// src/pages/StudentDashboard.jsx
 import React, { useMemo, useEffect, useState, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import {
-  Key,
-  Archive,
-  RotateCcw,
-  PlayCircle,
-  CheckCircle,
-  XCircle,
-  Clock,
-} from "lucide-react";
+import { Key, Archive, RotateCcw, PlayCircle, CheckCircle, XCircle, Clock } from "lucide-react";
 
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { useData } from "../contexts/DataContext.jsx";
 
 import { Button } from "../components/ui/button.jsx";
 import { Input } from "../components/ui/input.jsx";
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardContent,
-  CardDescription,
-} from "../components/ui/card.jsx";
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "../components/ui/card.jsx";
 import { Badge } from "../components/ui/badge.jsx";
 import { Progress } from "../components/ui/progress.jsx";
 
@@ -30,6 +17,24 @@ const TAB_VALUES = new Set(["courses", "homework", "activate", "archive"]);
 const LS_HW_ARCHIVE = "student_hw_archive_v1";
 
 const norm = (s) => String(s ?? "").trim();
+
+/* abs url like in CoursePage */
+const API_BASE_RAW =
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) || "";
+const API_ORIGIN = norm(API_BASE_RAW).replace(/\/api\/?$/i, "").replace(/\/$/, "");
+
+function toAbsUrl(url) {
+  const u = norm(url);
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u)) return u;
+  if (u.startsWith("//")) return `https:${u}`;
+  if (u.startsWith("/")) {
+    if (API_ORIGIN) return `${API_ORIGIN}${u}`;
+    return u;
+  }
+  if (API_ORIGIN) return `${API_ORIGIN}/${u}`;
+  return u;
+}
 
 function safeJsonParse(s, fallback) {
   try {
@@ -59,33 +64,28 @@ function setArchivedSet(userId, set) {
 function getHwIdsKey(hw) {
   return String(hw?.id ?? hw?.pk ?? "");
 }
-
 function getHwCourseId(hw) {
   return String(hw?.course_id ?? hw?.courseId ?? hw?.course ?? "");
 }
-
 function getHwLessonId(hw) {
   return String(hw?.lesson ?? hw?.lesson_id ?? hw?.lessonId ?? hw?.lesson?.id ?? hw?.lesson?.pk ?? "");
 }
-
 function getHwTitle(hw) {
   return hw?.lesson_title || (getHwLessonId(hw) ? `Урок #${getHwLessonId(hw)}` : "Урок");
 }
-
 function getHwStatus(hw) {
-  return String(hw?.status ?? "").toLowerCase(); // accepted | rework | declined | (any other)
+  return String(hw?.status ?? "").toLowerCase(); // accepted | rework | declined | examination
 }
-
 function getHwTeacherComment(hw) {
   return hw?.comment ?? "";
 }
-
 function getHwDate(hw) {
   return hw?.updated_at || hw?.created_at || "";
 }
 
 function homeworkStatusBadge(status) {
   if (status === "accepted") return <Badge className="bg-green-600 text-white border-transparent">Принято</Badge>;
+  if (status === "examination") return <Badge variant="secondary">На проверке</Badge>;
   if (status === "rework") return <Badge variant="secondary">На доработку</Badge>;
   if (status === "declined") return <Badge variant="destructive">Отклонено</Badge>;
   if (status) return <Badge variant="outline">Отправлено</Badge>;
@@ -94,9 +94,42 @@ function homeworkStatusBadge(status) {
 
 function homeworkIcon(status) {
   if (status === "accepted") return <CheckCircle className="w-5 h-5 text-green-600" />;
+  if (status === "examination") return <Clock className="w-5 h-5 text-blue-500" />;
   if (status === "rework") return <Clock className="w-5 h-5 text-orange-600" />;
   if (status === "declined") return <XCircle className="w-5 h-5 text-red-600" />;
   return <PlayCircle className="w-5 h-5 text-gray-400" />;
+}
+
+/* ✅ attachments view (dashboard) */
+function AttachmentsViewStudentDash({ attachments }) {
+  const list = Array.isArray(attachments) ? attachments : [];
+  if (!list.length) return null;
+
+  return (
+    <div className="mt-3 space-y-1">
+      <div className="text-xs text-gray-600">Файлы:</div>
+      {list.map((a, idx) => {
+        const url = a?.url || a?.file || a?.link || "";
+        const name = a?.name || a?.filename || "Файл";
+        const key = `${a?.type || "x"}_${idx}`;
+        return url ? (
+          <a
+            key={key}
+            href={toAbsUrl(url)}
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue-600 hover:underline break-all text-sm"
+          >
+            📎 {name}
+          </a>
+        ) : (
+          <div key={key} className="text-sm text-gray-700">
+            📎 {name}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function DashNav({ activeTab }) {
@@ -142,7 +175,6 @@ function DashNav({ activeTab }) {
 function getCourseId(course) {
   return String(course?.id ?? course?.course_id ?? "").trim();
 }
-
 function getTeacherName(course) {
   return (
     course?.teacher_name ||
@@ -156,7 +188,6 @@ function getTeacherName(course) {
     ""
   );
 }
-
 function getCategoryName(course) {
   return (
     course?.category_name ||
@@ -165,6 +196,24 @@ function getCategoryName(course) {
     course?.access?.category?.name ||
     "Категория"
   );
+}
+
+/* ✅ группировка: 1 карточка на урок (берём последнюю версию) */
+function groupLatestHomeworks(allHomeworks) {
+  const map = new Map(); // key = courseId|lessonId -> hw
+  for (const hw of Array.isArray(allHomeworks) ? allHomeworks : []) {
+    const cid = getHwCourseId(hw);
+    const lid = getHwLessonId(hw);
+    if (!cid || !lid) continue;
+    const key = `${cid}__${lid}`;
+
+    const prev = map.get(key);
+    const t = new Date(getHwDate(hw) || 0).getTime();
+    const pt = prev ? new Date(getHwDate(prev) || 0).getTime() : -1;
+
+    if (!prev || t >= pt) map.set(key, hw);
+  }
+  return Array.from(map.values());
 }
 
 export function StudentDashboard() {
@@ -211,15 +260,18 @@ export function StudentDashboard() {
 
   const allHomeworks = useMemo(() => (Array.isArray(data.myHomeworks) ? data.myHomeworks : []), [data.myHomeworks]);
 
+  // ✅ вместо всех версий — только последние (чтобы не было дублей)
+  const homeworksLatest = useMemo(() => groupLatestHomeworks(allHomeworks), [allHomeworks]);
+
   const homeworksActive = useMemo(() => {
     const set = archivedIds;
-    return allHomeworks.filter((hw) => !set.has(getHwIdsKey(hw)));
-  }, [allHomeworks, archivedIds]);
+    return homeworksLatest.filter((hw) => !set.has(getHwIdsKey(hw)));
+  }, [homeworksLatest, archivedIds]);
 
   const homeworksArchived = useMemo(() => {
     const set = archivedIds;
-    return allHomeworks.filter((hw) => set.has(getHwIdsKey(hw)));
-  }, [allHomeworks, archivedIds]);
+    return homeworksLatest.filter((hw) => set.has(getHwIdsKey(hw)));
+  }, [homeworksLatest, archivedIds]);
 
   const myCourses = useMemo(() => (Array.isArray(data.myCourses) ? data.myCourses : []), [data.myCourses]);
 
@@ -422,6 +474,8 @@ export function StudentDashboard() {
                         </div>
                       ) : null}
 
+                      <AttachmentsViewStudentDash attachments={hw?.attachments} />
+
                       <div className="mt-4 flex flex-wrap gap-3">
                         <Link to={openUrl}>
                           <Button variant="outline">Открыть</Button>
@@ -471,9 +525,7 @@ export function StudentDashboard() {
             {data.error?.activateToken ? (
               <p className="text-sm text-red-600 mt-3">{data.error.activateToken}</p>
             ) : (
-              <p className="text-sm text-gray-600 mt-4">
-                После активации курсы появятся в разделе “Мои курсы”.
-              </p>
+              <p className="text-sm text-gray-600 mt-4">После активации курсы появятся в разделе “Мои курсы”.</p>
             )}
           </CardContent>
         </Card>
@@ -514,6 +566,8 @@ export function StudentDashboard() {
                         </div>
                         {homeworkStatusBadge(status)}
                       </div>
+
+                      <AttachmentsViewStudentDash attachments={hw?.attachments} />
 
                       <div className="mt-4 flex flex-wrap gap-3">
                         <Link to={openUrl}>

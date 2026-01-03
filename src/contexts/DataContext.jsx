@@ -1,5 +1,13 @@
 // src/contexts/DataContext.jsx
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import axios from "axios";
 
 /**
@@ -7,13 +15,44 @@ import axios from "axios";
  * VITE_API_URL=http://127.0.0.1:8000/api/
  *
  * baseURL должен быть без хвостового "/".
+ *
+ * ✅ DEV-подсказка:
+ * Если VITE_API_URL пустой, и у тебя настроен Vite proxy на /api -> 127.0.0.1:8000,
+ * то baseURL можно оставить "/api" (будет уходить через прокси, без CORS).
  */
 const rawBase =
   (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) ||
   process.env.REACT_APP_API_URL ||
   "";
 
-const API_BASE = String(rawBase || "").trim().replace(/\/+$/, "");
+// ✅ если VITE_API_URL не задан, используем "/api" (удобно для vite proxy)
+const API_BASE = String(rawBase || "").trim()
+  ? String(rawBase || "").trim().replace(/\/+$/, "")
+  : "/api";
+
+/**
+ * ✅ origin для абсолютных ссылок на /media/...
+ * Примеры:
+ *  - API_BASE = "http://127.0.0.1:8000/api"  -> API_ORIGIN = "http://127.0.0.1:8000"
+ *  - API_BASE = "/api" (vite proxy)          -> API_ORIGIN = "" (оставим относительные)
+ */
+const API_ORIGIN = String(API_BASE || "")
+  .trim()
+  .replace(/\/api\/?$/i, "")
+  .replace(/\/$/, "");
+
+/**
+ * ✅ сделать ссылку абсолютной: "/media/x" -> "http://127.0.0.1:8000/media/x"
+ * Полезно для attachments и любых url, которые приходят как относительные.
+ */
+export function toAbsUrl(url) {
+  const u = String(url ?? "").trim();
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u)) return u;
+  if (u.startsWith("//")) return `https:${u}`;
+  if (u.startsWith("/")) return API_ORIGIN ? `${API_ORIGIN}${u}` : u;
+  return API_ORIGIN ? `${API_ORIGIN}/${u}` : u;
+}
 
 const LS_ACCESS = "access";
 
@@ -39,6 +78,7 @@ export function clearAccessToken() {
 
 const api = axios.create({
   baseURL: API_BASE,
+  // общий таймаут можно оставить большим, но для отправки ДЗ мы ставим timeout: 0
   timeout: 11125000,
 });
 
@@ -169,7 +209,7 @@ function stripVideoFromLessonsList(lessons) {
 }
 
 function extractLessonIdFromAny(x) {
-  const candidates = [x?.id, x?.pk, x?.lesson_id, x?.lessonId];
+  const candidates = [x?.id, x?.pk, x?.lesson_id, x?.lessonId, x?.lesson];
   for (const c of candidates) {
     const s = String(c ?? "").trim();
     if (s && s !== "0" && s !== "null" && s !== "undefined") return s;
@@ -319,7 +359,13 @@ function pickTeacherFromAny(x) {
 }
 
 function pickCategoryFromAny(x) {
-  return x?.category_name || x?.category?.name || x?.access?.category_name || x?.access?.category?.name || "";
+  return (
+    x?.category_name ||
+    x?.category?.name ||
+    x?.access?.category_name ||
+    x?.access?.category?.name ||
+    ""
+  );
 }
 
 function normalizeMyCourses(raw) {
@@ -450,6 +496,158 @@ async function enrichCoursesLessonsByAllowedIds(coursesArr) {
 }
 
 /* =========================
+ * HOMEWORK NORMALIZATION + ✅ DEDUPE (1 ДЗ на 1 lesson)
+ * ========================= */
+function pickHomeworkId(h) {
+  return String(h?.id ?? h?.pk ?? "").trim();
+}
+function pickHomeworkLessonId(h) {
+  const cand = [
+    h?.lesson_id,
+    h?.lessonId,
+    h?.lesson,
+    h?.lesson?.id,
+    h?.lesson?.pk,
+    h?.lesson_detail?.id,
+  ];
+  for (const c of cand) {
+    const s = String(c ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
+function pickDtMs(h) {
+  const s = String(h?.updated_at ?? h?.updatedAt ?? h?.created_at ?? h?.createdAt ?? "").trim();
+  const ms = s ? Date.parse(s) : NaN;
+  return Number.isFinite(ms) ? ms : NaN;
+}
+function pickFileUrlFromAny(obj) {
+  const o = obj || {};
+  const candidates = [
+    o?.file,
+    o?.attachment,
+    o?.document,
+    o?.homework_file,
+    o?.homeworkFile,
+    o?.file_url,
+    o?.fileUrl,
+    o?.attachment_url,
+    o?.attachmentUrl,
+  ];
+  for (const c of candidates) {
+    const s = String(c ?? "").trim();
+    if (s) return s;
+  }
+  const deep = o?.file?.url || o?.attachment?.url || o?.homework_file?.url;
+  if (deep) return String(deep);
+  return "";
+}
+
+function normalizeHomeworkItem(h) {
+  if (!h || typeof h !== "object") return null;
+
+  const id = pickHomeworkId(h);
+  const lessonId = pickHomeworkLessonId(h);
+
+  const fileRaw = pickFileUrlFromAny(h);
+  const file_url = fileRaw ? toAbsUrl(fileRaw) : "";
+
+  const teacher_comment =
+    h?.teacher_comment ??
+    h?.teacherComment ??
+    h?.comment ??
+    h?.message ??
+    h?.response_comment ??
+    null;
+
+  return {
+    ...h,
+    id: id || h?.id,
+    pk: id || h?.pk,
+    lesson_id: lessonId || h?.lesson_id,
+    lessonId: lessonId || h?.lessonId,
+    __lesson_id: lessonId,
+    __id: id,
+    __dt_ms: pickDtMs(h),
+    __file_url: file_url,
+    __teacher_comment: teacher_comment,
+  };
+}
+
+function dedupeHomeworksByLesson(list) {
+  const arr = (Array.isArray(list) ? list : [])
+    .map(normalizeHomeworkItem)
+    .filter(Boolean)
+    .filter((h) => !!String(h.__lesson_id || "").trim());
+
+  const map = new Map();
+
+  for (const hw of arr) {
+    const key = String(hw.__lesson_id);
+    const prev = map.get(key);
+
+    if (!prev) {
+      map.set(key, hw);
+      continue;
+    }
+
+    const a = hw.__dt_ms;
+    const b = prev.__dt_ms;
+
+    if (Number.isFinite(a) && Number.isFinite(b)) {
+      if (a >= b) map.set(key, hw);
+      continue;
+    }
+
+    if (Number.isFinite(a) && !Number.isFinite(b)) {
+      map.set(key, hw);
+      continue;
+    }
+
+    if (!Number.isFinite(a) && Number.isFinite(b)) {
+      continue;
+    }
+
+    const ai = Number(hw.__id);
+    const bi = Number(prev.__id);
+    if (Number.isFinite(ai) && Number.isFinite(bi)) {
+      if (ai >= bi) map.set(key, hw);
+    } else {
+      const as = String(hw.__id || "");
+      const bs = String(prev.__id || "");
+      if (as.length >= bs.length) map.set(key, hw);
+    }
+  }
+
+  return Array.from(map.values()).sort((x, y) => {
+    const a = Number(x.__lesson_id);
+    const b = Number(y.__lesson_id);
+    if (Number.isFinite(a) && Number.isFinite(b)) return a - b;
+    return String(x.__lesson_id).localeCompare(String(y.__lesson_id));
+  });
+}
+
+function mergeHomeworkIntoList(prevList, hwItem) {
+  const hw = normalizeHomeworkItem(hwItem);
+  if (!hw) return Array.isArray(prevList) ? prevList : [];
+
+  const prev = Array.isArray(prevList) ? prevList : [];
+  const lessonKey = String(hw.__lesson_id || "");
+  if (!lessonKey) return prev;
+
+  const next = prev.map(normalizeHomeworkItem).filter(Boolean);
+  const idx = next.findIndex((x) => String(x.__lesson_id || "") === lessonKey);
+
+  if (idx === -1) {
+    next.push(hw);
+  } else {
+    next[idx] = { ...next[idx], ...hw };
+  }
+
+  return dedupeHomeworksByLesson(next);
+}
+
+/* =========================
  * Teacher lesson payload (Swagger) + ✅ order
  * ========================= */
 function sanitizeTeacherLessonPayload(payload) {
@@ -473,7 +671,6 @@ function sanitizeTeacherLessonPayload(payload) {
   if (p.title != null) out.title = p.title;
   if (p.description != null) out.description = p.description;
 
-  // ✅ order
   const order = p.order ?? p.lesson_order ?? p.lessonOrder ?? null;
   if (order !== null && order !== undefined && String(order).trim() !== "") {
     const n = Number(order);
@@ -486,7 +683,8 @@ function sanitizeTeacherLessonPayload(payload) {
   const youtubeId = p.youtube_video_id ?? p.youtubeVideoId;
 
   if (videoUrl === null || hasKey("video_url") || hasKey("videoUrl")) {
-    out.video_url = videoUrl === null ? null : String(videoUrl || "").trim() ? String(videoUrl).trim() : undefined;
+    out.video_url =
+      videoUrl === null ? null : String(videoUrl || "").trim() ? String(videoUrl).trim() : undefined;
   } else if (videoUrl != null && String(videoUrl).trim()) {
     out.video_url = String(videoUrl).trim();
   }
@@ -561,10 +759,7 @@ async function youtubeGet(url) {
 }
 
 async function youtubePost(url, body) {
-  const attempt = await tryMany([
-    () => api.post(url, body),
-    () => api.post(url.replace(/\/$/, ""), body),
-  ]);
+  const attempt = await tryMany([() => api.post(url, body), () => api.post(url.replace(/\/$/, ""), body)]);
   if (!attempt.ok) throw attempt.error;
   return attempt.res;
 }
@@ -574,6 +769,17 @@ function mergeLessonIntoTeacherLessons(prev, lessonId, patch) {
   if (!id) return Array.isArray(prev) ? prev : [];
   const list = Array.isArray(prev) ? prev : [];
   return list.map((l) => (String(l?.id ?? l?.pk ?? "") === id ? { ...l, ...(patch || {}) } : l));
+}
+
+/* =========================
+ * ✅ Helpers for statuses
+ * ========================= */
+function normStatus(s) {
+  return String(s ?? "").trim().toLowerCase();
+}
+function isResubmittableStatus(s) {
+  const st = normStatus(s);
+  return st === "rework" || st === "declined";
 }
 
 const DataContext = createContext(null);
@@ -681,6 +887,9 @@ export function DataProvider({ children }) {
     }
   }, []);
 
+  /**
+   * ✅ teacherHomeworks: делаем 1 ДЗ на 1 урок (дедуп), чтобы не было дублей/бардака
+   */
   const loadTeacherHomeworks = useCallback(async () => {
     setLoading((p) => ({ ...p, teacherHomeworks: true }));
     setError((p) => ({ ...p, teacherHomeworks: "" }));
@@ -688,7 +897,10 @@ export function DataProvider({ children }) {
       const attempt = await tryMany([() => api.get("teacher/homeworks/"), () => api.get("teacher/homeworks")]);
       if (!attempt.ok) throw attempt.error;
 
-      setTeacherHomeworks(asList(attempt.res.data));
+      const raw = asList(attempt.res.data);
+      const deduped = dedupeHomeworksByLesson(raw);
+
+      setTeacherHomeworks(deduped);
       return true;
     } catch (e) {
       setError((p) => ({ ...p, teacherHomeworks: getErrMsg(e) }));
@@ -732,7 +944,6 @@ export function DataProvider({ children }) {
     }
   }, []);
 
-  // callback обычно дергает браузер, но на всякий
   const youtubeProjectOauthCallback = useCallback(async () => {
     setLoading((p) => ({ ...p, youtube: true }));
     setError((p) => ({ ...p, youtube: "" }));
@@ -757,7 +968,6 @@ export function DataProvider({ children }) {
     try {
       const res = await youtubeGet(`youtube/lessons/${encodeURIComponent(id)}/refresh-status/`);
       const patch = res?.data && typeof res.data === "object" ? res.data : {};
-      // обновим teacherLessons локально
       setTeacherLessons((prev) => mergeLessonIntoTeacherLessons(prev, id, patch));
       return { ok: true, data: res.data };
     } catch (e) {
@@ -777,7 +987,6 @@ export function DataProvider({ children }) {
     setLoading((p) => ({ ...p, youtube: true }));
     setError((p) => ({ ...p, youtube: "" }));
     try {
-      // пробуем разные ключи — чтобы попасть в бэк без угадываний
       const payloadA = ids.length ? { lesson_ids: ids } : {};
       const payloadB = ids.length ? { lessons: ids } : {};
       const payloadC = ids.length ? { ids } : {};
@@ -792,9 +1001,8 @@ export function DataProvider({ children }) {
       if (!attempt.ok) throw attempt.error;
 
       const data = attempt.res.data;
-
-      // если бэк вернул список уроков — мержим
       const list = asList(data);
+
       if (list.length) {
         setTeacherLessons((prev) => {
           const base = Array.isArray(prev) ? prev : [];
@@ -851,19 +1059,24 @@ export function DataProvider({ children }) {
     }
   }, []);
 
+  /**
+   * ✅ myHomeworks: 1 ДЗ на 1 урок + нормализация файла в __file_url
+   */
   const loadMyHomeworks = useCallback(async () => {
     setLoading((p) => ({ ...p, myHomeworks: true }));
     setError((p) => ({ ...p, myHomeworks: "" }));
 
     try {
       const res = await api.get("me/homeworks/");
-      setMyHomeworks(asList(res.data));
-      return { ok: true, data: res.data };
+      const raw = asList(res.data);
+      const deduped = dedupeHomeworksByLesson(raw);
+      setMyHomeworks(deduped);
+      return { ok: true, data: res.data, list: deduped };
     } catch (e) {
       const msg = getErrMsg(e);
       setError((p) => ({ ...p, myHomeworks: msg }));
       setMyHomeworks([]);
-      return { ok: false, error: msg };
+      return { ok: false, error: msg, list: [] };
     } finally {
       setLoading((p) => ({ ...p, myHomeworks: false }));
     }
@@ -960,9 +1173,17 @@ export function DataProvider({ children }) {
 
       if (!baseLesson) return { ok: true, data, lesson: null };
 
+      const hwFileRaw = baseLesson?.homework_file || baseLesson?.homeworkFile || baseLesson?.file || null;
+      const homework_file_url = hwFileRaw ? toAbsUrl(String(hwFileRaw?.url ?? hwFileRaw)) : "";
+
       const merged = { ...baseLesson, ...pickVideoFields(data) };
       const best = pickBestVideoUrl(merged);
-      const lessonObj = { ...merged, __picked_video: best };
+
+      const lessonObj = {
+        ...merged,
+        __picked_video: best,
+        __homework_file_url: homework_file_url,
+      };
 
       setOpenedLessons((prev) => ({ ...(prev || {}), [key]: lessonObj }));
 
@@ -987,67 +1208,189 @@ export function DataProvider({ children }) {
     }
   }, []);
 
+  /**
+   * ✅ submitHomework (ПЕРЕСДАЧА ПОСЛЕ rework/declined):
+   *
+   * - всегда при отправке ставим status="examination" (НА ПРОВЕРКЕ)
+   * - если уже есть ДЗ по уроку:
+   *      1) PATCH (обычно работает)
+   *      2) если PATCH не разрешён (часто при declined) -> PUT
+   *      3) если и так нельзя -> пробуем "resubmit endpoints" (если есть на бэке)
+   *      4) в самом конце пробуем POST создать новую (если бэк это допускает)
+   *
+   * - timeout: 0 чтобы не обрывалось
+   * - можно передать { signal, onProgress } снаружи при желании
+   */
   const submitHomework = useCallback(
-    async ({ lessonId, content, homeworkId = null }) => {
+    async ({ lessonId, content, file = null, signal, onProgress } = {}) => {
       setLoading((p) => ({ ...p, submitHomework: true }));
-
-      const pickHwId = (h) => String(h?.id ?? h?.pk ?? "").trim();
-      const pickLessonId = (h) =>
-        String(h?.lesson ?? h?.lesson_id ?? h?.lessonId ?? h?.lesson?.id ?? h?.lesson?.pk ?? "").trim();
-      const pickStatus = (h) => String(h?.status ?? "").trim().toLowerCase();
 
       try {
         const idNum = Number(lessonId);
         if (!Number.isFinite(idNum)) return { ok: false, error: "Неверный lessonId" };
 
         const text = norm(content);
-        if (!text) return { ok: false, error: "Пустой текст" };
+        if (!text && !hasFileLike(file)) return { ok: false, error: "Пусто: нет текста и нет файла" };
 
-        const list = Array.isArray(myHomeworks) ? myHomeworks : [];
+        const currentList = Array.isArray(myHomeworks) ? myHomeworks : [];
+        const existing =
+          currentList.find((h) => String(h?.__lesson_id || h?.lesson_id || "") === String(idNum)) || null;
 
-        const byId =
-          homeworkId != null ? list.find((h) => pickHwId(h) === String(homeworkId).trim()) || null : null;
+        const existingStatus = normStatus(existing?.status);
 
-        const byLesson = list.find((h) => pickLessonId(h) === String(idNum)) || null;
-
-        const existing = byId || byLesson;
-
-        if (existing && pickStatus(existing) === "accepted") {
+        if (existing && existingStatus === "accepted") {
           return { ok: false, error: "ДЗ уже принято — редактирование закрыто" };
         }
 
-        if (!existing) {
-          const payloadA = { lesson: idNum, content: text };
-          const payloadB = { lesson_id: idNum, content: text };
+        const willSendFile = hasFileLike(file);
 
-          const attempt = await tryMany([() => api.post("homeworks/", payloadA), () => api.post("homeworks/", payloadB)]);
+        // ✅ ключевой момент: при любой отправке после rework/declined → снова "на проверке"
+        const basePayload = {
+          content: text || "",
+          status: "examination",
+          // часто полезно очистить коммент учителя в модели (если бэк принимает)
+          teacher_comment: null,
+          comment: null,
+        };
+
+        // axios config for submit (no timeout) + optional progress + optional signal
+        const submitCfgBase = {
+          timeout: 0,
+          signal,
+          ...(typeof onProgress === "function"
+            ? {
+                onUploadProgress: (evt) => {
+                  try {
+                    const total = evt.total || 0;
+                    const loaded = evt.loaded || 0;
+                    const percent = total > 0 ? Math.round((loaded / total) * 100) : 0;
+                    onProgress({ loaded, total, percent });
+                  } catch (_) {}
+                },
+              }
+            : {}),
+        };
+
+        // ====== UPDATE EXISTING HOMEWORK ======
+        if (existing && (existing?.id || existing?.pk)) {
+          const hwId = String(existing?.id ?? existing?.pk).trim();
+          if (!hwId) return { ok: false, error: "Не найден homeworkId" };
+
+          const body = willSendFile ? buildFormData({ ...basePayload, file }) : basePayload;
+          const cfg = willSendFile
+            ? stripContentTypeForFormData({ ...submitCfgBase })
+            : { ...submitCfgBase };
+
+          // 1) PATCH
+          let attempt = await tryMany([
+            () => api.patch(`me/homeworks/${encodeURIComponent(hwId)}/`, body, cfg),
+            () => api.patch(`me/homeworks/${encodeURIComponent(hwId)}`, body, cfg),
+            () => api.patch(`homeworks/${encodeURIComponent(hwId)}/`, body, cfg),
+            () => api.patch(`homeworks/${encodeURIComponent(hwId)}`, body, cfg),
+          ]);
+
+          // 2) if patch forbidden/not allowed -> PUT
+          if (!attempt.ok) {
+            const code = attempt?.error?.response?.status;
+            // часто это 405/403/400 при declined
+            if (code === 405 || code === 403 || code === 400 || code === 409) {
+              attempt = await tryMany([
+                () => api.put(`me/homeworks/${encodeURIComponent(hwId)}/`, body, cfg),
+                () => api.put(`me/homeworks/${encodeURIComponent(hwId)}`, body, cfg),
+                () => api.put(`homeworks/${encodeURIComponent(hwId)}/`, body, cfg),
+                () => api.put(`homeworks/${encodeURIComponent(hwId)}`, body, cfg),
+              ]);
+            }
+          }
+
+          // 3) if still not ok -> try resubmit endpoints (если бэк такой имеет)
+          if (!attempt.ok) {
+            const resubmitBodyA = willSendFile
+              ? buildFormData({ homework_id: hwId, lesson_id: idNum, ...basePayload, file })
+              : { homework_id: hwId, lesson_id: idNum, ...basePayload };
+
+            const resubmitBodyB = willSendFile
+              ? buildFormData({ id: hwId, lesson: idNum, ...basePayload, file })
+              : { id: hwId, lesson: idNum, ...basePayload };
+
+            const cfg2 = willSendFile
+              ? stripContentTypeForFormData({ ...submitCfgBase })
+              : { ...submitCfgBase };
+
+            attempt = await tryMany([
+              () => api.post(`me/homeworks/${encodeURIComponent(hwId)}/resubmit/`, resubmitBodyA, cfg2),
+              () => api.post(`me/homeworks/${encodeURIComponent(hwId)}/resubmit`, resubmitBodyA, cfg2),
+              () => api.post(`homeworks/${encodeURIComponent(hwId)}/resubmit/`, resubmitBodyA, cfg2),
+              () => api.post(`homeworks/${encodeURIComponent(hwId)}/resubmit`, resubmitBodyA, cfg2),
+              () => api.post(`me/homeworks/resubmit/`, resubmitBodyB, cfg2),
+              () => api.post(`me/homeworks/resubmit`, resubmitBodyB, cfg2),
+              () => api.post(`homeworks/resubmit/`, resubmitBodyB, cfg2),
+              () => api.post(`homeworks/resubmit`, resubmitBodyB, cfg2),
+            ]);
+          }
+
+          // 4) last fallback: POST create new (если бэк допускает)
+          if (!attempt.ok) {
+            const createPayloadA = willSendFile
+              ? buildFormData({ lesson: idNum, ...basePayload, file })
+              : { lesson: idNum, ...basePayload };
+            const createPayloadB = willSendFile
+              ? buildFormData({ lesson_id: idNum, ...basePayload, file })
+              : { lesson_id: idNum, ...basePayload };
+            const cfg3 = willSendFile
+              ? stripContentTypeForFormData({ ...submitCfgBase })
+              : { ...submitCfgBase };
+
+            attempt = await tryMany([
+              () => api.post("me/homeworks/", createPayloadA, cfg3),
+              () => api.post("me/homeworks/", createPayloadB, cfg3),
+              () => api.post("homeworks/", createPayloadA, cfg3),
+              () => api.post("homeworks/", createPayloadB, cfg3),
+            ]);
+          }
+
           if (!attempt.ok) throw attempt.error;
 
-          await loadMyHomeworks();
-          return { ok: true, data: attempt.res.data };
+          const updated = attempt.res.data;
+
+          setMyHomeworks((prev) => mergeHomeworkIntoList(prev, updated));
+          setTeacherHomeworks((prev) => mergeHomeworkIntoList(prev, updated));
+
+          return { ok: true, data: updated, updated: true, resubmitted: isResubmittableStatus(existingStatus) };
         }
 
-        const hwId = pickHwId(existing);
-        if (!hwId) return { ok: false, error: "Не найден homeworkId" };
+        // ====== CREATE NEW HOMEWORK (NO EXISTING) ======
+        const createPayloadA = willSendFile
+          ? buildFormData({ lesson: idNum, ...basePayload, file })
+          : { lesson: idNum, ...basePayload };
+        const createPayloadB = willSendFile
+          ? buildFormData({ lesson_id: idNum, ...basePayload, file })
+          : { lesson_id: idNum, ...basePayload };
+        const cfg = willSendFile
+          ? stripContentTypeForFormData({ ...submitCfgBase })
+          : { ...submitCfgBase };
 
-        const st = pickStatus(existing);
-        const payload =
-          st === "rework" || st === "declined"
-            ? { content: text, status: "submitted" }
-            : { content: text };
-
-        const attempt = await tryMany([() => api.patch(`me/homeworks/${encodeURIComponent(hwId)}/`, payload)]);
+        const attempt = await tryMany([
+          () => api.post("homeworks/", createPayloadA, cfg),
+          () => api.post("homeworks/", createPayloadB, cfg),
+          () => api.post("me/homeworks/", createPayloadA, cfg),
+          () => api.post("me/homeworks/", createPayloadB, cfg),
+        ]);
         if (!attempt.ok) throw attempt.error;
 
-        await loadMyHomeworks();
-        return { ok: true, data: attempt.res.data };
+        const created = attempt.res.data;
+
+        setMyHomeworks((prev) => mergeHomeworkIntoList(prev, created));
+        setTeacherHomeworks((prev) => mergeHomeworkIntoList(prev, created));
+
+        return { ok: true, data: created, created: true };
       } catch (e) {
         return { ok: false, error: getErrMsg(e) };
       } finally {
         setLoading((p) => ({ ...p, submitHomework: false }));
       }
     },
-    [loadMyHomeworks, myHomeworks]
+    [myHomeworks]
   );
 
   /* =========================
@@ -1072,12 +1415,12 @@ export function DataProvider({ children }) {
 
       if (!attempt.ok) throw attempt.error;
 
-      const res = attempt.res;
-      setTeacherHomeworks((prev) =>
-        (Array.isArray(prev) ? prev : []).map((h) => (String(h?.id) === id ? { ...h, ...res.data } : h))
-      );
+      const data = attempt.res.data;
 
-      return { ok: true, data: res.data };
+      setTeacherHomeworks((prev) => mergeHomeworkIntoList(prev, data));
+      setMyHomeworks((prev) => mergeHomeworkIntoList(prev, data));
+
+      return { ok: true, data };
     } catch (e) {
       return { ok: false, error: getErrMsg(e) };
     }
@@ -1230,23 +1573,37 @@ export function DataProvider({ children }) {
 
   const deleteCourse = useCallback(
     async (courseId) => {
-      const id = String(courseId || "");
+      const id = String(courseId || "").trim();
       if (!id) return { ok: false, error: "Нет courseId" };
 
       try {
-        const attempt = await tryMany([
-          () => api.delete(`courses/${encodeURIComponent(id)}/`),
-          () => api.delete(`courses/${encodeURIComponent(id)}`),
+        let attempt = await tryMany([
+          () => api.delete(`teacher/courses/${encodeURIComponent(id)}/`),
+          () => api.delete(`teacher/courses/${encodeURIComponent(id)}`),
+
+          () => api.delete(`teacher/course/${encodeURIComponent(id)}/`),
+          () => api.delete(`teacher/course/${encodeURIComponent(id)}`),
+
+          () => api.delete(`teacher/my-courses/${encodeURIComponent(id)}/`),
+          () => api.delete(`teacher/my-courses/${encodeURIComponent(id)}`),
         ]);
+
+        if (!attempt.ok && attempt?.error?.response?.status === 404) {
+          attempt = await tryMany([
+            () => api.delete(`courses/${encodeURIComponent(id)}/`),
+            () => api.delete(`courses/${encodeURIComponent(id)}`),
+          ]);
+        }
+
         if (!attempt.ok) throw attempt.error;
 
-        await loadPublic();
+        await Promise.all([loadPublic(), loadTeacherLessons(), loadTeacherHomeworks()]);
         return { ok: true };
       } catch (e) {
         return { ok: false, error: getErrMsg(e) };
       }
     },
-    [loadPublic]
+    [loadPublic, loadTeacherLessons, loadTeacherHomeworks]
   );
 
   const value = useMemo(
@@ -1298,6 +1655,9 @@ export function DataProvider({ children }) {
 
       setAccessToken,
       clearAccessToken,
+
+      // ✅ helpers
+      toAbsUrl,
     }),
     [
       categories,

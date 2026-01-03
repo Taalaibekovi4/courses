@@ -68,7 +68,6 @@ function getYouTubeId(raw) {
   const v = norm(raw);
   if (!v) return "";
 
-  // если просто ID
   if (/^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
 
   try {
@@ -93,7 +92,6 @@ function getYouTubeId(raw) {
     }
   } catch (_) {}
 
-  // fallback regex
   const short = v.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
   if (short?.[1]) return short[1];
 
@@ -107,20 +105,22 @@ function getYouTubeId(raw) {
 }
 
 function statusBadge(status) {
-  if (status === "accepted")
+  const s = String(status || "").toLowerCase();
+  if (s === "accepted")
     return <Badge className="bg-green-600 text-white border-transparent">Принято</Badge>;
-  if (status === "examination") return <Badge variant="outline">На проверке</Badge>;
-  if (status === "rework") return <Badge variant="secondary">На доработку</Badge>;
-  if (status === "declined") return <Badge variant="destructive">Отклонено</Badge>;
-  if (status) return <Badge variant="outline">Отправлено</Badge>;
+  if (s === "examination") return <Badge variant="outline">На проверке</Badge>;
+  if (s === "rework") return <Badge variant="secondary">На доработку</Badge>;
+  if (s === "declined") return <Badge variant="destructive">Отклонено</Badge>;
+  if (s) return <Badge variant="outline">Отправлено</Badge>;
   return null;
 }
 
 function LessonStatusIcon({ status }) {
-  if (status === "accepted") return <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />;
-  if (status === "examination") return <Clock className="w-5 h-5 text-blue-500 flex-shrink-0" />;
-  if (status === "rework") return <Clock className="w-5 h-5 text-orange-600 flex-shrink-0" />;
-  if (status === "declined") return <XCircle className="w-5 h-5 text-red-600 flex-shrink-0" />;
+  const s = String(status || "").toLowerCase();
+  if (s === "accepted") return <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />;
+  if (s === "examination") return <Clock className="w-5 h-5 text-blue-500 flex-shrink-0" />;
+  if (s === "rework") return <Clock className="w-5 h-5 text-orange-600 flex-shrink-0" />;
+  if (s === "declined") return <XCircle className="w-5 h-5 text-red-600 flex-shrink-0" />;
   return <PlayCircle className="w-5 h-5 text-gray-400 flex-shrink-0" />;
 }
 
@@ -166,6 +166,67 @@ function getHwStatus(hw) {
 function getHwTeacherComment(hw) {
   return hw?.comment ?? "";
 }
+function getHwDate(hw) {
+  return hw?.updated_at || hw?.created_at || "";
+}
+
+/* =========================
+   ✅ Attachments view (student) + abs url
+   ========================= */
+function AttachmentsViewStudent({ attachments }) {
+  const list = Array.isArray(attachments) ? attachments : [];
+  if (!list.length) return null;
+
+  return (
+    <div className="mt-2 space-y-1">
+      {list.map((a, idx) => {
+        const key = `${a?.type || "x"}_${idx}`;
+        const url = a?.url || a?.file || a?.link || "";
+        const name = a?.name || a?.filename || "Файл";
+        return url ? (
+          <a
+            key={key}
+            href={toAbsUrl(url)}
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue-600 hover:underline break-all text-sm"
+          >
+            📎 {name}
+          </a>
+        ) : (
+          <div key={key} className="text-sm text-gray-700">
+            📎 {name}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* =========================
+   ✅ Chat bubbles (student left, teacher right)
+   ========================= */
+function Bubble({ side = "left", title, meta, children }) {
+  const isLeft = side === "left";
+  return (
+    <div className={`flex ${isLeft ? "justify-start" : "justify-end"}`}>
+      <div
+        className={[
+          "max-w-[860px] w-full md:w-[85%] rounded-2xl border shadow-sm",
+          isLeft ? "bg-white" : "bg-blue-50",
+        ].join(" ")}
+      >
+        <div className="px-4 py-3 border-b flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-semibold text-sm truncate">{title}</div>
+            {meta ? <div className="text-xs text-gray-500 mt-0.5">{meta}</div> : null}
+          </div>
+        </div>
+        <div className="px-4 py-3">{children}</div>
+      </div>
+    </div>
+  );
+}
 
 export function StudentCoursePage() {
   const { courseId } = useParams();
@@ -205,7 +266,6 @@ export function StudentCoursePage() {
   useEffect(() => {
     if (!lessons.length) return;
 
-    // сбрасываем ошибки при смене урока
     setOpenErr("");
 
     if (queryLessonId) {
@@ -260,7 +320,6 @@ export function StudentCoursePage() {
   }, [openedLesson]);
 
   const ensureVideoLoadedIfAlreadyOpened = useCallback(async () => {
-    // Если урок уже открыт (is_opened=true), но после refresh нет ссылки/ID — подтянем без списания
     if (!lessonKey) return;
     if (!serverOpenedFlag) return;
     if (openedLesson) return;
@@ -289,9 +348,6 @@ export function StudentCoursePage() {
       }
 
       toast.success(force ? "Видео открыто" : "Видео загружено");
-
-      // ⚡️ чуть меньше лагов: не дергаем лишний раз все данные, если не нужно
-      // но remaining_videos и is_opened могут обновиться — оставим только курсы
       data.loadMyCourses?.();
     },
     [data, lessonKey]
@@ -302,26 +358,26 @@ export function StudentCoursePage() {
     [data.myHomeworks]
   );
 
-  const myHwForLesson = useMemo(() => {
-    if (!currentLesson) return null;
+  /* =========================
+     ✅ Все версии ДЗ по уроку (для одного блока)
+     ========================= */
+  const myHwListForLesson = useMemo(() => {
+    if (!currentLesson) return [];
     const lid = getLessonId(currentLesson);
     const cid = String(courseId);
 
-    const list = myHomeworks
+    return myHomeworks
       .filter((hw) => getHwCourseId(hw) === cid && getHwLessonId(hw) === lid)
       .slice()
-      .sort(
-        (a, b) =>
-          new Date((b.updated_at || b.created_at || 0)) - new Date((a.updated_at || a.created_at || 0))
-      );
-
-    return list[0] || null;
+      .sort((a, b) => new Date(getHwDate(a) || 0) - new Date(getHwDate(b) || 0)); // старые -> новые
   }, [myHomeworks, currentLesson, courseId]);
 
+  const lastHw = myHwListForLesson[myHwListForLesson.length - 1] || null;
+
   useEffect(() => {
-    setHomeworkText(myHwForLesson?.content || "");
+    setHomeworkText(lastHw?.content || "");
     setLinkInput("");
-  }, [myHwForLesson?.id]);
+  }, [lastHw?.id]);
 
   const lessonHomeworkStatusMap = useMemo(() => {
     const map = new Map();
@@ -352,16 +408,29 @@ export function StudentCoursePage() {
     return map;
   }, [myHomeworks, courseId]);
 
-  const hwStatus = getHwStatus(myHwForLesson);
+  const hwStatus = getHwStatus(lastHw);
   const isAccepted = hwStatus === "accepted";
-  const hasHw = !!myHwForLesson?.id;
+  const hasHw = !!lastHw?.id;
+
+  // ✅ Можно редактировать всегда, пока не принято
   const canEdit = !!currentLesson && !isAccepted;
+
+  // ✅ режим отправки:
+  // - нет ДЗ -> create
+  // - rework/declined -> create new version
+  // - examination -> update same (студент может исправлять сколько угодно до проверки)
+  const submitMode = useMemo(() => {
+    if (!hasHw) return "create";
+    if (hwStatus === "rework" || hwStatus === "declined") return "create_new_version";
+    return "update_current"; // examination / empty / sent
+  }, [hasHw, hwStatus]);
 
   const actionLabel = useMemo(() => {
     if (isAccepted) return "Принято — отправка закрыта";
-    if (!hasHw) return "Отправить";
-    return "Сохранить изменения";
-  }, [isAccepted, hasHw]);
+    if (submitMode === "create") return "Отправить на проверку";
+    if (submitMode === "create_new_version") return "Отправить исправленную версию";
+    return "Сохранить изменения (пока на проверке)";
+  }, [isAccepted, submitMode]);
 
   const renderVideo = useCallback(() => {
     const isLoading = !!data.loading?.openLesson?.[lessonKey];
@@ -370,7 +439,6 @@ export function StudentCoursePage() {
     const rawAbs = toAbsUrl(raw);
     const ytId = getYouTubeId(rawAbs) || getYouTubeId(raw);
 
-    // ✅ direct video URL (mp4/webm/ogg или /media/...)
     const directPlayable = isDirectVideoUrl(rawAbs) ? rawAbs : "";
 
     const hasPlayable = Boolean(ytId || directPlayable);
@@ -456,7 +524,6 @@ export function StudentCoursePage() {
       );
     }
 
-    // ✅ mp4/webm/ogg (включая /media/...)
     return (
       <video
         key={`vd_${lessonKey}_${directPlayable}`}
@@ -497,14 +564,19 @@ export function StudentCoursePage() {
 
     const lid = getLessonId(currentLesson);
 
+    const homeworkIdToSend =
+      submitMode === "update_current" ? lastHw?.id : null;
+
     const res = await data.submitHomework?.({
       lessonId: lid,
       content: text,
-      homeworkId: hasHw ? myHwForLesson.id : null,
+      homeworkId: homeworkIdToSend,
     });
 
     if (res?.ok) {
-      toast.success(!hasHw ? "Отправлено" : "Изменения сохранены");
+      if (submitMode === "create") toast.success("Отправлено на проверку");
+      else if (submitMode === "create_new_version") toast.success("Отправлено новой версией");
+      else toast.success("Изменения сохранены (ДЗ всё ещё на проверке)");
       data.loadMyHomeworks?.();
     } else {
       toast.error(res?.error || "Не удалось отправить ДЗ");
@@ -537,6 +609,23 @@ export function StudentCoursePage() {
   }
 
   const courseTitle = course?.title || course?.name || course?.access?.course_title || "Курс";
+
+  // ✅ материалы ДЗ: ловим разные ключи (чтобы студент всегда видел файл)
+  const hwDesc =
+    currentLesson?.homework_description ??
+    currentLesson?.homeworkDescription ??
+    currentLesson?.hw_description ??
+    currentLesson?.hwDescription ??
+    "";
+
+  const hwFile =
+    currentLesson?.homework_file ??
+    currentLesson?.homeworkFile ??
+    currentLesson?.homework_file_url ??
+    currentLesson?.homeworkFileUrl ??
+    currentLesson?.hw_file ??
+    currentLesson?.hwFile ??
+    "";
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -614,7 +703,7 @@ export function StudentCoursePage() {
                 <Card>
                   <CardHeader className="flex-row items-start justify-between">
                     <CardTitle className="min-w-0">{currentLesson?.title || "Урок"}</CardTitle>
-                    {myHwForLesson?.status ? statusBadge(getHwStatus(myHwForLesson)) : null}
+                    {lastHw?.status ? statusBadge(getHwStatus(lastHw)) : null}
                   </CardHeader>
                   <CardContent>
                     <div className="aspect-video bg-black rounded-lg overflow-hidden">{renderVideo()}</div>
@@ -631,69 +720,144 @@ export function StudentCoursePage() {
                   <CardHeader>
                     <CardTitle>Домашнее задание</CardTitle>
                   </CardHeader>
+
                   <CardContent>
-                    {hasHw ? (
+                    {/* ✅ Материалы ДЗ от преподавателя */}
+                    {hwDesc ? (
                       <div className="mb-4 p-3 bg-gray-50 rounded border border-gray-200">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="text-sm font-medium">Вы уже отправили ДЗ</div>
-                          {statusBadge(hwStatus)}
-                        </div>
-
-                        <div className="mt-2 text-xs text-gray-600">
-                          Новое ДЗ создать нельзя — можно редактировать это же, пока статус не станет “Принято”.
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="mb-4 text-sm text-gray-600">Можно отправить решение текстом и ссылкой.</p>
-                    )}
-
-                    {getHwTeacherComment(myHwForLesson) ? (
-                      <div className="mb-4 p-3 bg-blue-50 rounded">
-                        <div className="text-sm font-medium mb-1">Комментарий преподавателя:</div>
-                        <div className="text-sm whitespace-pre-wrap">{getHwTeacherComment(myHwForLesson)}</div>
+                        <div className="text-sm font-medium mb-1">Задание от преподавателя:</div>
+                        <div className="text-sm whitespace-pre-wrap text-gray-800">{hwDesc}</div>
                       </div>
                     ) : null}
 
-                    <Textarea
-                      placeholder="Ваш ответ или пояснение..."
-                      value={homeworkText}
-                      onChange={(e) => setHomeworkText(e.target.value)}
-                      rows={5}
-                      disabled={!canEdit || !!data.loading?.submitHomework}
-                    />
-
-                    <div className="mt-4 flex flex-col md:flex-row gap-3">
-                      <div className="flex gap-2 w-full">
-                        <Input
-                          placeholder="Ссылка (GitHub, Google Drive...)"
-                          value={linkInput}
-                          onChange={(e) => setLinkInput(e.target.value)}
-                          disabled={!canEdit || !!data.loading?.submitHomework}
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={addLinkIntoHomeworkText}
-                          disabled={!canEdit || !!data.loading?.submitHomework}
+                    {hwFile ? (
+                      <div className="mb-6">
+                        <a
+                          href={toAbsUrl(hwFile)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 hover:underline break-all text-sm"
                         >
-                          <LinkIcon className="w-4 h-4 mr-2" />
-                          Добавить
-                        </Button>
+                          📎 Материал к домашнему заданию
+                        </a>
                       </div>
+                    ) : null}
+
+                    {/* ✅ Один блок (thread) вместо дублей */}
+                    <div className="mb-6">
+                      <div className="flex items-center justify-between gap-3 mb-3">
+                        <div className="font-semibold">Диалог по ДЗ</div>
+                        {lastHw?.status ? statusBadge(getHwStatus(lastHw)) : null}
+                      </div>
+
+                      {myHwListForLesson.length === 0 ? (
+                        <div className="text-sm text-gray-600">
+                          Пока нет отправок. Напишите ответ и отправьте на проверку.
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {myHwListForLesson.map((hw, idx) => {
+                            const st = getHwStatus(hw);
+                            const dt = getHwDate(hw);
+                            const meta = dt ? new Date(dt).toLocaleString() : "";
+                            const vLabel = `Версия #${idx + 1} • ${meta}`;
+
+                            return (
+                              <div key={String(hw?.id || idx)} className="space-y-2">
+                                <Bubble side="left" title="Студент" meta={vLabel}>
+                                  {hw?.content ? (
+                                    <div className="text-sm whitespace-pre-wrap break-words text-gray-800">
+                                      {hw.content}
+                                    </div>
+                                  ) : (
+                                    <div className="text-sm text-gray-600">—</div>
+                                  )}
+                                  <AttachmentsViewStudent attachments={hw?.attachments} />
+                                  <div className="mt-2">{statusBadge(st)}</div>
+                                </Bubble>
+
+                                {getHwTeacherComment(hw) ? (
+                                  <Bubble
+                                    side="right"
+                                    title="Преподаватель"
+                                    meta={st === "accepted" ? "Результат: принято" : "Комментарий"}
+                                  >
+                                    <div className="text-sm whitespace-pre-wrap">{getHwTeacherComment(hw)}</div>
+                                  </Bubble>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
 
-                    <div className="mt-4 flex flex-wrap gap-3">
-                      {isAccepted ? (
-                        <Button disabled className="bg-green-600 hover:bg-green-600">
-                          <CheckCircle className="w-4 h-4 mr-2" />
-                          Принято — отправка закрыта
-                        </Button>
-                      ) : (
-                        <Button onClick={handleSendHomework} disabled={!canEdit || !!data.loading?.submitHomework}>
-                          <Send className="w-4 h-4 mr-2" />
-                          {data.loading?.submitHomework ? "Отправка..." : actionLabel}
-                        </Button>
-                      )}
+                    {/* ✅ Редактор ответа */}
+                    <div className="rounded-2xl border bg-white p-4">
+                      <div className="flex items-center justify-between gap-3 mb-3">
+                        <div className="font-semibold">Ваш ответ</div>
+                        {isAccepted ? (
+                          <Badge className="bg-green-600 text-white border-transparent">Закрыто</Badge>
+                        ) : submitMode === "update_current" ? (
+                          <Badge variant="secondary">Можно редактировать до проверки</Badge>
+                        ) : (
+                          <Badge variant="outline">Новая отправка</Badge>
+                        )}
+                      </div>
+
+                      <Textarea
+                        placeholder="Ваш ответ или пояснение..."
+                        value={homeworkText}
+                        onChange={(e) => setHomeworkText(e.target.value)}
+                        rows={6}
+                        disabled={!canEdit || !!data.loading?.submitHomework}
+                      />
+
+                      <div className="mt-4 flex flex-col md:flex-row gap-3">
+                        <div className="flex gap-2 w-full">
+                          <Input
+                            placeholder="Ссылка (GitHub, Google Drive...)"
+                            value={linkInput}
+                            onChange={(e) => setLinkInput(e.target.value)}
+                            disabled={!canEdit || !!data.loading?.submitHomework}
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={addLinkIntoHomeworkText}
+                            disabled={!canEdit || !!data.loading?.submitHomework}
+                          >
+                            <LinkIcon className="w-4 h-4 mr-2" />
+                            Добавить
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-3">
+                        {isAccepted ? (
+                          <Button disabled className="bg-green-600 hover:bg-green-600">
+                            <CheckCircle className="w-4 h-4 mr-2" />
+                            Принято — отправка закрыта
+                          </Button>
+                        ) : (
+                          <Button onClick={handleSendHomework} disabled={!canEdit || !!data.loading?.submitHomework}>
+                            <Send className="w-4 h-4 mr-2" />
+                            {data.loading?.submitHomework ? "Отправка..." : actionLabel}
+                          </Button>
+                        )}
+                      </div>
+
+                      {submitMode === "update_current" && !isAccepted ? (
+                        <div className="mt-2 text-xs text-gray-500">
+                          Вы можете менять текст сколько угодно — учитель увидит актуальную версию, пока не проверил.
+                        </div>
+                      ) : null}
+
+                      {(hwStatus === "rework" || hwStatus === "declined") && !isAccepted ? (
+                        <div className="mt-2 text-xs text-gray-500">
+                          После “На доработку/Отклонено” отправка создаст новую версию, но всё останется в одном блоке.
+                        </div>
+                      ) : null}
                     </div>
                   </CardContent>
                 </Card>
