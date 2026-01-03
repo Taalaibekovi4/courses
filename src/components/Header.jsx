@@ -82,6 +82,79 @@ function extractSettings(payload) {
   return payload;
 }
 
+/* ===========================
+   ✅ FAVICON helpers (круглый)
+   =========================== */
+
+function removeAllFavicons() {
+  document
+    .querySelectorAll("link[rel='icon'], link[rel='shortcut icon'], link[rel~='icon']")
+    .forEach((n) => n.remove());
+}
+
+function setCircularFaviconFromImageUrl(imageUrl) {
+  const url = str(imageUrl);
+  if (!url) return;
+
+  const size = 64;
+
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+
+  img.onload = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // прозрачный фон
+    ctx.clearRect(0, 0, size, size);
+
+    // круглая маска
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+
+    ctx.drawImage(img, 0, 0, size, size);
+
+    // через blob -> лучше против кэша
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+
+      removeAllFavicons();
+
+      const blobUrl = URL.createObjectURL(blob);
+
+      const link = document.createElement("link");
+      link.rel = "icon";
+      link.type = "image/png";
+      link.href = blobUrl;
+      document.head.appendChild(link);
+
+      const link2 = document.createElement("link");
+      link2.rel = "shortcut icon";
+      link2.type = "image/png";
+      link2.href = blobUrl;
+      document.head.appendChild(link2);
+    }, "image/png");
+  };
+
+  img.onerror = () => {
+    // если CORS/ошибка — ставим обычный favicon с cache-bust
+    removeAllFavicons();
+    const link = document.createElement("link");
+    link.rel = "icon";
+    link.href = `${url}${url.includes("?") ? "&" : "?"}v=${Date.now()}`;
+    document.head.appendChild(link);
+  };
+
+  // cache-bust для самой картинки
+  img.src = `${url}${url.includes("?") ? "&" : "?"}v=${Date.now()}`;
+}
+
 export function Header() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -157,16 +230,8 @@ export function Header() {
         if (!alive) return;
         setLogoUrl(absLogo || "");
 
-        // динамический favicon
-        if (absLogo) {
-          let link = document.querySelector("link[rel~='icon']");
-          if (!link) {
-            link = document.createElement("link");
-            link.rel = "icon";
-            document.head.appendChild(link);
-          }
-          link.href = absLogo;
-        }
+        // ✅ favicon тянем из того же logo, но делаем круглым
+        if (absLogo) setCircularFaviconFromImageUrl(absLogo);
       } catch (e) {
         console.error(e);
         if (!alive) return;
@@ -208,12 +273,12 @@ export function Header() {
         <div className="relative">
           <div className="app-container py-3 flex items-center justify-between">
             <Link to="/" className="flex items-center gap-2 group" onClick={handleLogoClick}>
-              <span className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center shadow-sm overflow-hidden">
+              <span className="w-10 h-10 rounded-[10%] bg-gray-200 flex items-center justify-center shadow-sm overflow-hidden">
                 {logoUrl && (
                   <img
                     src={logoUrl}
                     alt="logo"
-                    className="w-full h-full object-cover rounded-full"
+                    className="w-full h-full object-cover rounded-[10%]"
                     loading="lazy"
                     onError={() => setLogoUrl("")}
                   />
@@ -232,7 +297,9 @@ export function Header() {
                     to={it.to}
                     className={[
                       "px-3 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2",
-                      active ? "bg-blue-50 text-blue-700" : "text-gray-700 hover:bg-gray-100 hover:text-blue-700",
+                      active
+                        ? "bg-blue-50 text-blue-700"
+                        : "text-gray-700 hover:bg-gray-100 hover:text-blue-700",
                     ].join(" ")}
                   >
                     <ActiveIcon className="w-4 h-4" />
@@ -298,6 +365,92 @@ export function Header() {
           </div>
         </div>
       </header>
+
+      {/* ✅ Mobile Menu */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-40 md:hidden" style={{ top: headerH }}>
+          {/* backdrop */}
+          <div className="absolute inset-0 bg-black/30" onClick={closeMobile} aria-hidden="true" />
+          {/* panel */}
+          <div className="absolute inset-x-0 top-0 bg-white border-b shadow-lg">
+            <div className="app-container py-3">
+              <nav className="flex flex-col gap-1">
+                {navItems.map((it) => {
+                  const ActiveIcon = it.icon;
+                  const active = isActive(it.to);
+                  return (
+                    <Link
+                      key={it.to}
+                      to={it.to}
+                      onClick={closeMobile}
+                      className={[
+                        "px-3 py-3 rounded-lg text-sm font-medium transition flex items-center gap-2",
+                        active
+                          ? "bg-blue-50 text-blue-700"
+                          : "text-gray-700 hover:bg-gray-100 hover:text-blue-700",
+                      ].join(" ")}
+                    >
+                      <ActiveIcon className="w-4 h-4" />
+                      {it.label}
+                    </Link>
+                  );
+                })}
+              </nav>
+
+              <div className="mt-3 pt-3 border-t flex flex-col gap-2">
+                {user ? (
+                  <>
+                    {showCabinet && (
+                      <Link to={cabinetTo} onClick={closeMobile}>
+                        <Button variant="ghost" size="sm" className="w-full justify-start rounded-lg">
+                          <LayoutDashboard className="w-4 h-4 mr-2" />
+                          {cabinetLabel}
+                        </Button>
+                      </Link>
+                    )}
+                    {showAdmin && (
+                      <Link to="/Analystic" onClick={closeMobile}>
+                        <Button size="sm" className="w-full justify-start rounded-lg">
+                          <Shield className="w-4 h-4 mr-2" />
+                          Админка
+                        </Button>
+                      </Link>
+                    )}
+
+                    <div className="flex items-center gap-2 px-2 py-2 rounded-lg bg-gray-100">
+                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center text-xs font-bold">
+                        {getInitials(user.name)}
+                      </div>
+                      <div className="leading-tight pr-1">
+                        <div className="text-sm font-medium text-gray-900 max-w-[220px] truncate">
+                          {user.name}
+                        </div>
+                        <div className="text-[11px] text-gray-500 -mt-0.5">
+                          {getRoleLabel(user.role)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleLogout}
+                      className="w-full justify-center rounded-lg"
+                    >
+                      <LogOut className="w-4 h-4 mr-2" />
+                      Выйти
+                    </Button>
+                  </>
+                ) : (
+                  <Link to="/login" onClick={closeMobile}>
+                    <Button className="w-full rounded-lg">Войти</Button>
+                  </Link>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Spacer */}
       <div aria-hidden="true" style={{ height: headerH }} />

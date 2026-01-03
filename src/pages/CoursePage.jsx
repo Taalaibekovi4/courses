@@ -6,7 +6,7 @@ import axios from "axios";
 import { Button } from "../components/ui/button.jsx";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card.jsx";
 import { Badge } from "../components/ui/badge.jsx";
-import { PlayCircle, CheckCircle, X, BookOpen, GraduationCap, ShoppingCart } from "lucide-react";
+import { PlayCircle, CheckCircle, X, BookOpen, GraduationCap, ShoppingCart, Volume2 } from "lucide-react";
 
 // ⚠️ PREVIEW_SECONDS оставляем как было
 const PREVIEW_SECONDS = 5;
@@ -337,6 +337,12 @@ export function CoursePage() {
 
   const [fallbackIframeId, setFallbackIframeId] = useState("");
 
+  // ✅ для мобильных: стартуем muted, а звук включаем кнопкой
+  const [isMuted, setIsMuted] = useState(true);
+
+  // ✅ чтобы iframe можно было “перезапустить” со звуком после клика
+  const [iframeKey, setIframeKey] = useState(0);
+
   const tariffsRef = useRef(null);
 
   const ytMountRef = useRef(null);
@@ -529,6 +535,7 @@ export function CoursePage() {
     setVideoError("");
     setIsVideoEnded(false);
     setFallbackIframeId("");
+    setIsMuted(true);
     destroyYouTubePlayer();
   }, [destroyYouTubePlayer]);
 
@@ -540,6 +547,8 @@ export function CoursePage() {
     setVideoError("");
     setIsVideoEnded(false);
     setFallbackIframeId("");
+    setIsMuted(true); // ✅ при каждом открытии стартуем в mute чтобы автоплей завёлся
+    setIframeKey((k) => k + 1);
   }, []);
 
   useEffect(() => {
@@ -588,6 +597,7 @@ export function CoursePage() {
     async (videoId) => {
       const ok = await ensureYouTubeScriptWithTimeout(3500);
 
+      // ✅ fallback iframe: autoplay + mute (иначе на телефоне часто будет пауза)
       if (!ok) {
         setFallbackIframeId(videoId);
         setIsVideoReady(true);
@@ -626,10 +636,14 @@ export function CoursePage() {
             onReady: (e) => {
               setIsVideoReady(true);
               setVideoError("");
+
+              // ✅ стартуем muted чтобы autoplay точно сработал на телефоне
               try {
                 e.target.seekTo(0, true);
+                if (typeof e.target.mute === "function") e.target.mute();
                 e.target.playVideo();
               } catch (_) {}
+
               startYouTubeTimer();
             },
             onStateChange: (e) => {
@@ -657,6 +671,26 @@ export function CoursePage() {
     [destroyYouTubePlayer, startYouTubeTimer, stopYouTubeTimer]
   );
 
+  // ✅ кнопка включения звука (пользовательский жест => браузер разрешит)
+  const enableSound = useCallback(() => {
+    setIsMuted(false);
+
+    const p = ytPlayerRef.current;
+    if (p && typeof p.unMute === "function") {
+      try {
+        p.unMute();
+        if (typeof p.setVolume === "function") p.setVolume(100);
+        if (typeof p.playVideo === "function") p.playVideo();
+      } catch (_) {}
+      return;
+    }
+
+    // fallback iframe: перезапускаем iframe уже без mute (клик был => обычно стартует со звуком)
+    if (fallbackIframeId) {
+      setIframeKey((k) => k + 1);
+    }
+  }, [fallbackIframeId]);
+
   useEffect(() => {
     let alive = true;
 
@@ -668,6 +702,7 @@ export function CoursePage() {
       setVideoError("");
       setIsVideoEnded(false);
       setFallbackIframeId("");
+      setIsMuted(true);
 
       const l = activeLesson;
       if (!l) {
@@ -986,9 +1021,12 @@ export function CoursePage() {
                   {/* VIDEO */}
                   {fallbackIframeId ? (
                     <iframe
+                      key={iframeKey}
                       title="lesson-video"
                       className="absolute inset-0 w-full h-full"
-                      src={`https://www.youtube-nocookie.com/embed/${fallbackIframeId}?autoplay=1&rel=0&modestbranding=1&playsinline=1`}
+                      src={`https://www.youtube-nocookie.com/embed/${fallbackIframeId}?autoplay=1&mute=${
+                        isMuted ? 1 : 0
+                      }&rel=0&modestbranding=1&playsinline=1`}
                       allow="autoplay; encrypted-media; picture-in-picture"
                       allowFullScreen
                     />
@@ -996,18 +1034,27 @@ export function CoursePage() {
                     <div ref={ytMountRef} className="absolute inset-0 w-full h-full" />
                   )}
 
-                  {/* ✅ SHIELD: делаем видео НЕ кликабельным */}
+                  {/* ✅ SHIELD: видео НЕ кликабельным (но кнопка звука работает выше) */}
                   {!videoError && (
                     <div
                       className="absolute inset-0 z-20"
                       aria-hidden="true"
                       style={{
                         cursor: "not-allowed",
-                        // перехватываем клики/тач — видео не получит управление
                         pointerEvents: "auto",
                         background: "transparent",
                       }}
                     />
+                  )}
+
+                  {/* ✅ BUTTON: включить звук (это действие пользователя => браузер разрешит звук) */}
+                  {!videoError && isVideoReady && isMuted && (
+                    <div className="absolute z-30 left-4 bottom-4">
+                      <Button onClick={enableSound} className="gap-2">
+                        <Volume2 className="w-4 h-4" />
+                        Включить звук
+                      </Button>
+                    </div>
                   )}
 
                   {/* ERROR */}
@@ -1031,7 +1078,7 @@ export function CoursePage() {
             </div>
           </div>
 
-          {/* 2) MODAL: PAYWALL (через 5 сек, логика та же) */}
+          {/* 2) MODAL: PAYWALL */}
           {!videoError && isPaywallOpen && (
             <div className="fixed inset-0 z-[60] flex items-center justify-center px-4" role="dialog" aria-modal="true">
               <div

@@ -24,11 +24,76 @@ import { Badge } from "../components/ui/badge.jsx";
 
 const norm = (s) => String(s ?? "").trim();
 
+/* =========================
+   ✅ ABS URL helper (чтобы /media/... работал)
+   VITE_API_URL может быть:
+   - https://site.com/api
+   - https://site.com/api/
+   - https://site.com
+   ========================= */
+const API_BASE_RAW =
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) || "";
+
+const API_ORIGIN = norm(API_BASE_RAW).replace(/\/api\/?$/i, "").replace(/\/$/, "");
+
+function toAbsUrl(url) {
+  const u = norm(url);
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u)) return u;
+  if (u.startsWith("//")) return `https:${u}`;
+  if (u.startsWith("/")) {
+    if (API_ORIGIN) return `${API_ORIGIN}${u}`;
+    return u;
+  }
+  if (API_ORIGIN) return `${API_ORIGIN}/${u}`;
+  return u;
+}
+
+function isDirectVideoUrl(input) {
+  const v = norm(String(input || "")).toLowerCase();
+  if (!v) return false;
+  if (v.startsWith("blob:")) return true;
+  if (v.startsWith("/media/") || v.includes("/media/")) return true;
+  return (
+    v.endsWith(".mp4") ||
+    v.endsWith(".webm") ||
+    v.endsWith(".ogg") ||
+    v.includes(".mp4?") ||
+    v.includes(".webm?") ||
+    v.includes(".ogg?")
+  );
+}
+
 function getYouTubeId(raw) {
   const v = norm(raw);
   if (!v) return "";
+
+  // если просто ID
   if (/^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
 
+  try {
+    const u = new URL(v);
+    const host = (u.hostname || "").toLowerCase();
+
+    if (host.includes("youtu.be")) {
+      const id = u.pathname.replace("/", "");
+      if (/^[a-zA-Z0-9_-]{11}$/.test(id)) return id;
+    }
+
+    if (host.includes("youtube.com")) {
+      const id = u.searchParams.get("v");
+      if (id && /^[a-zA-Z0-9_-]{11}$/.test(id)) return id;
+
+      const parts = u.pathname.split("/").filter(Boolean);
+      const idx = parts.findIndex((p) => p === "embed");
+      if (idx >= 0 && /^[a-zA-Z0-9_-]{11}$/.test(parts[idx + 1] || "")) return parts[idx + 1];
+
+      const sidx = parts.findIndex((p) => p === "shorts");
+      if (sidx >= 0 && /^[a-zA-Z0-9_-]{11}$/.test(parts[sidx + 1] || "")) return parts[sidx + 1];
+    }
+  } catch (_) {}
+
+  // fallback regex
   const short = v.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
   if (short?.[1]) return short[1];
 
@@ -101,9 +166,6 @@ function getHwStatus(hw) {
 function getHwTeacherComment(hw) {
   return hw?.comment ?? "";
 }
-function getHwDate(hw) {
-  return hw?.updated_at || hw?.created_at || "";
-}
 
 export function StudentCoursePage() {
   const { courseId } = useParams();
@@ -143,6 +205,9 @@ export function StudentCoursePage() {
   useEffect(() => {
     if (!lessons.length) return;
 
+    // сбрасываем ошибки при смене урока
+    setOpenErr("");
+
     if (queryLessonId) {
       const exists = lessons.find((l) => getLessonId(l) === String(queryLessonId));
       if (exists) {
@@ -166,7 +231,6 @@ export function StudentCoursePage() {
     return (data.openedLessons || {})[lessonKey] || null;
   }, [data.openedLessons, lessonKey]);
 
-  // важно: урок "открыт" по флагу, но видео показываем ТОЛЬКО если openLesson реально вернул ссылку/ID
   const serverOpenedFlag = Boolean(currentLesson?.is_opened);
   const sessionOpenedFlag = Boolean(openedLesson);
   const lessonOpenedForUI = serverOpenedFlag || sessionOpenedFlag;
@@ -178,8 +242,8 @@ export function StudentCoursePage() {
 
   const pickRawVideoFromOpened = useCallback(() => {
     const o = openedLesson || {};
-    const v = o.__picked_video || "";
-    if (norm(v)) return v;
+    const picked = o.__picked_video || "";
+    if (norm(picked)) return picked;
 
     return (
       o.video_url ||
@@ -196,8 +260,7 @@ export function StudentCoursePage() {
   }, [openedLesson]);
 
   const ensureVideoLoadedIfAlreadyOpened = useCallback(async () => {
-    // если на сервере is_opened=true (например, урок уже ранее был открыт),
-    // но в сессии нет openedLesson (обновили страницу), можно запросить видео без списания.
+    // Если урок уже открыт (is_opened=true), но после refresh нет ссылки/ID — подтянем без списания
     if (!lessonKey) return;
     if (!serverOpenedFlag) return;
     if (openedLesson) return;
@@ -217,14 +280,19 @@ export function StudentCoursePage() {
     async ({ force }) => {
       if (!lessonKey) return;
       setOpenErr("");
+
       const res = await data.openLesson?.(lessonKey, { force: !!force });
       if (res?.ok === false) {
         setOpenErr(res?.error || "Нет доступа к видео");
         toast.error(res?.error || "Нет доступа к видео");
-      } else {
-        toast.success(force ? "Видео открыто" : "Видео загружено");
-        data.loadMyCourses?.(); // чтобы remaining_videos и is_opened обновились
+        return;
       }
+
+      toast.success(force ? "Видео открыто" : "Видео загружено");
+
+      // ⚡️ чуть меньше лагов: не дергаем лишний раз все данные, если не нужно
+      // но remaining_videos и is_opened могут обновиться — оставим только курсы
+      data.loadMyCourses?.();
     },
     [data, lessonKey]
   );
@@ -298,17 +366,17 @@ export function StudentCoursePage() {
   const renderVideo = useCallback(() => {
     const isLoading = !!data.loading?.openLesson?.[lessonKey];
 
-    // ВИДЕО показываем только если openLesson реально дал ссылку/ID
     const raw = pickRawVideoFromOpened();
-    const ytId = getYouTubeId(raw);
-    const directUrl = norm(raw);
+    const rawAbs = toAbsUrl(raw);
+    const ytId = getYouTubeId(rawAbs) || getYouTubeId(raw);
 
-    const hasPlayable = Boolean(ytId || directUrl);
+    // ✅ direct video URL (mp4/webm/ogg или /media/...)
+    const directPlayable = isDirectVideoUrl(rawAbs) ? rawAbs : "";
+
+    const hasPlayable = Boolean(ytId || directPlayable);
 
     if (!hasPlayable) {
       const noRemaining = remainingVideos !== null && Number(remainingVideos) <= 0;
-
-      // если урок уже открыт на сервере — показываем кнопку "Загрузить видео" (force:false)
       const canLoadWithoutSpend = serverOpenedFlag;
 
       return (
@@ -378,6 +446,7 @@ export function StudentCoursePage() {
 
       return (
         <iframe
+          key={`yt_${lessonKey}_${ytId}`}
           title="video"
           src={src}
           className="w-full h-full"
@@ -387,7 +456,17 @@ export function StudentCoursePage() {
       );
     }
 
-    return <video src={directUrl} controls className="w-full h-full object-cover bg-black" preload="metadata" />;
+    // ✅ mp4/webm/ogg (включая /media/...)
+    return (
+      <video
+        key={`vd_${lessonKey}_${directPlayable}`}
+        src={directPlayable}
+        controls
+        playsInline
+        preload="metadata"
+        className="w-full h-full object-cover bg-black"
+      />
+    );
   }, [
     data.loading?.openLesson,
     lessonKey,
@@ -559,10 +638,6 @@ export function StudentCoursePage() {
                           <div className="text-sm font-medium">Вы уже отправили ДЗ</div>
                           {statusBadge(hwStatus)}
                         </div>
-
-                        {getHwDate(myHwForLesson) ? (
-                          <div className="text-xs text-gray-500 mt-1">Дата: {String(getHwDate(myHwForLesson))}</div>
-                        ) : null}
 
                         <div className="mt-2 text-xs text-gray-600">
                           Новое ДЗ создать нельзя — можно редактировать это же, пока статус не станет “Принято”.

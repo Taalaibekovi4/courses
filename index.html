@@ -3,13 +3,45 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>vostok-massage.kg/</title>
+    <title>vostok-massage.kg</title>
+
     <meta
       name="description"
-      content="Учитесь у лучших преподавателей. Выбирайте курсы по вашим интересам и развивайтесь вместе с нами."
+      content="Учитесь у лучших преподавателей. Выбирайте курсы по вашим интересам."
     />
-    <!-- фавикон будет подставляться динамически через Header.jsx -->
+
+    <!-- ✅ Единственный favicon: круг на прозрачном фоне (круг до краёв) -->
+    <link
+      id="app-favicon"
+      rel="icon"
+      type="image/svg+xml"
+      sizes="any"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='32' fill='%230066ff'/%3E%3C/svg%3E"
+    />
+
+    <!-- ✅ Подстраховка для некоторых браузеров -->
+    <link
+      id="app-favicon-shortcut"
+      rel="shortcut icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='32' fill='%230066ff'/%3E%3C/svg%3E"
+    />
+
+    <!-- ✅ Удаляем любые другие favicon (кэш/плагины/старые теги) -->
+    <script>
+      (function () {
+        const keep1 = document.getElementById("app-favicon");
+        const keep2 = document.getElementById("app-favicon-shortcut");
+
+        document
+          .querySelectorAll("link[rel='icon'], link[rel='shortcut icon'], link[rel~='icon']")
+          .forEach((n) => {
+            if (n !== keep1 && n !== keep2) n.remove();
+          });
+      })();
+    </script>
   </head>
+
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>

@@ -19,7 +19,6 @@ import {
   Trash2,
   Image as ImageIcon,
   RefreshCw,
-  Link2,
 } from "lucide-react";
 
 import { useAuth } from "../contexts/AuthContext.jsx";
@@ -36,6 +35,28 @@ const norm = (s) => String(s ?? "").trim();
 const normLow = (s) => norm(s).toLowerCase();
 
 const LS_TEACHER_HW_ARCHIVE = "teacher_hw_archive_v1";
+
+/* =========================
+   ✅ ABS URL helper (как в CoursePage)
+   чтобы /media/... работал на сервере
+   ========================= */
+const API_BASE_RAW =
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) || "";
+
+const API_ORIGIN = norm(API_BASE_RAW).replace(/\/api\/?$/i, "").replace(/\/$/, "");
+
+function toAbsUrl(url) {
+  const u = norm(url);
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u)) return u;
+  if (u.startsWith("//")) return `https:${u}`;
+  if (u.startsWith("/")) {
+    if (API_ORIGIN) return `${API_ORIGIN}${u}`;
+    return u;
+  }
+  if (API_ORIGIN) return `${API_ORIGIN}/${u}`;
+  return u;
+}
 
 function safeJsonParse(s, fallback) {
   try {
@@ -70,7 +91,9 @@ function StatusBadge({ status }) {
   if (s === "rework")
     return <Badge className="bg-orange-600 text-white border-transparent">На доработку</Badge>;
   if (s === "declined") return <Badge variant="destructive">Отклонено</Badge>;
-  if (s === "submitted" || !s) return <Badge variant="secondary">На проверке</Badge>;
+
+  // ✅ API присылает "examination" как "на проверке"
+  if (s === "examination" || !s) return <Badge variant="secondary">На проверке</Badge>;
 
   return <Badge variant="outline">—</Badge>;
 }
@@ -91,7 +114,7 @@ function YouTubeStatusBadge({ status, error }) {
   if (s === "error" || s === "failed")
     return (
       <Badge variant="destructive" title={norm(error) || ""}>
-         ошибка
+        ошибка
       </Badge>
     );
 
@@ -112,7 +135,6 @@ function GlobalNoScrollbarStyle() {
 
 /* =========================
    Body scroll lock (FIX!)
-   - предотвращает "залипание" overflow:hidden после 2-3 модалок/оверлеев
    ========================= */
 let __sbLockCount = 0;
 let __sbPrevOverflow = "";
@@ -191,6 +213,10 @@ function isDirectVideoUrl(input) {
   const v = normLow(input);
   if (!v) return false;
   if (v.startsWith("blob:")) return true;
+
+  // ✅ серверные /media/... тоже считаем видео
+  if (v.startsWith("/media/") || v.includes("/media/")) return true;
+
   return (
     v.endsWith(".mp4") ||
     v.endsWith(".webm") ||
@@ -202,8 +228,8 @@ function isDirectVideoUrl(input) {
 }
 
 function VideoPreview({ source, className = "", heightClass = "h-[160px]" }) {
-  const src = norm(source);
-  if (!src) {
+  const raw = norm(source);
+  if (!raw) {
     return (
       <div
         className={`rounded-lg bg-gray-100 border flex items-center justify-center text-sm text-gray-600 ${heightClass} ${className}`}
@@ -213,7 +239,9 @@ function VideoPreview({ source, className = "", heightClass = "h-[160px]" }) {
     );
   }
 
-  const ytId = extractYouTubeId(src);
+  // ✅ делаем абсолютный урл как на CoursePage
+  const src = toAbsUrl(raw);
+  const ytId = extractYouTubeId(src) || extractYouTubeId(raw);
 
   if (ytId) {
     const embed = `https://www.youtube-nocookie.com/embed/${ytId}?rel=0&modestbranding=1&playsinline=1`;
@@ -419,7 +447,7 @@ function AttachmentsView({ attachments }) {
             <div key={key} className="text-sm">
               {url ? (
                 <a
-                  href={url}
+                  href={toAbsUrl(url)}
                   target="_blank"
                   rel="noreferrer"
                   className="text-blue-600 hover:underline break-all"
@@ -451,7 +479,12 @@ function LessonHomeworkMaterialsSingle({ file, existingUrl, onPick, onClear }) {
       {existingUrl ? (
         <div className="text-sm">
           Текущий файл:{" "}
-          <a href={existingUrl} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline break-all">
+          <a
+            href={toAbsUrl(existingUrl)}
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue-600 hover:underline break-all"
+          >
             Открыть
           </a>
         </div>
@@ -580,7 +613,12 @@ function normalizeLessonTitle(l) {
   return l?.title ?? l?.lesson_title ?? "";
 }
 function normalizeLessonCourseId(l) {
-  const cid = l?.course ?? l?.courseId ?? l?.course_id ?? "";
+  const c = l?.course;
+  const cid =
+    l?.courseId ??
+    l?.course_id ??
+    (c && typeof c === "object" ? c.id : c) ??
+    "";
   return String(cid || "");
 }
 
@@ -594,7 +632,7 @@ function normalizeHomework(hw) {
   const studentUsername =
     hw?.student_username ?? hw?.studentUsername ?? hw?.username ?? hw?.student?.username ?? "";
   const content = hw?.content ?? "";
-  const status = hw?.status ?? "submitted";
+  const status = hw?.status ?? "examination";
   const teacherComment = hw?.comment ?? hw?.teacherComment ?? "";
   const createdAt = hw?.created_at ?? hw?.createdAt ?? "";
   const reviewedAt = hw?.updated_at ?? hw?.reviewedAt ?? hw?.updatedAt ?? "";
@@ -608,7 +646,7 @@ function normalizeHomework(hw) {
     userId: String(userId),
     studentUsername: String(studentUsername),
     content: String(content),
-    status: String(status || "submitted"),
+    status: String(status || "examination"),
     teacherComment: String(teacherComment || ""),
     createdAt: String(createdAt || ""),
     reviewedAt: String(reviewedAt || ""),
@@ -618,7 +656,8 @@ function normalizeHomework(hw) {
 
 function isTeacherCanReview(status) {
   const s = normLow(status);
-  return s === "submitted" || !s || s === "rework";
+  // ✅ API: examination / rework можно проверять
+  return s === "examination" || s === "rework" || !s;
 }
 
 /* =========================
@@ -786,22 +825,18 @@ export function TeacherDashboard() {
     [teacherHomeworks]
   );
 
+  /* =========================================================
+     ✅ ЖЁСТКО: показываем ТОЛЬКО свои курсы
+     1) если есть teacher поля в курсах — фильтруем по ним
+     2) если teacher поля нет/пусто — фильтруем по teacherLessons.course
+     3) если и там пусто — показываем 0 курсов (НЕ все!)
+     ========================================================= */
   const teacherCourses = useMemo(() => {
     const uid = String(user.id);
     const list = normalizedCourses;
 
-    const anyTeacherField = list.some(
-      (c) =>
-        c?.teacherId != null ||
-        c?.teacher_id != null ||
-        c?.teacher != null ||
-        c?.teacher?.id != null ||
-        c?.owner_id != null ||
-        c?.instructor != null
-    );
-    if (!anyTeacherField) return list;
-
-    return list.filter((c) => {
+    // 1) пробуем по teacher полям
+    const byTeacherField = list.filter((c) => {
       const t =
         c?.teacherId ??
         c?.teacher_id ??
@@ -810,9 +845,23 @@ export function TeacherDashboard() {
         c?.owner_id ??
         c?.instructor ??
         null;
-      return String(t ?? "") === uid;
+      return t != null && String(t) === uid;
     });
-  }, [normalizedCourses, user.id]);
+
+    if (byTeacherField.length > 0) return byTeacherField;
+
+    // 2) фоллбек по teacherLessons (course id)
+    const myCourseIds = new Set(
+      (Array.isArray(normalizedLessons) ? normalizedLessons : [])
+        .map((l) => normalizeLessonCourseId(l))
+        .filter(Boolean)
+        .map(String)
+    );
+
+    if (myCourseIds.size === 0) return []; // ✅ важно: не показывать чужие курсы
+
+    return list.filter((c) => myCourseIds.has(String(normalizeCourseId(c))));
+  }, [normalizedCourses, normalizedLessons, user.id]);
 
   const teacherCourseIds = useMemo(
     () => new Set(teacherCourses.map((c) => normalizeCourseId(c))),
@@ -820,7 +869,7 @@ export function TeacherDashboard() {
   );
 
   const homeworksSafe = useMemo(() => {
-    if (teacherCourseIds.size === 0) return normalizedHomeworks;
+    if (teacherCourseIds.size === 0) return [];
     return normalizedHomeworks.filter((hw) => teacherCourseIds.has(String(hw.courseId)));
   }, [normalizedHomeworks, teacherCourseIds]);
 
@@ -832,17 +881,19 @@ export function TeacherDashboard() {
     return homeworksSafe.filter((hw) => archivedIds.has(String(hw.id)));
   }, [homeworksSafe, archivedIds]);
 
-  const pendingCount = teacherHomeworksActive.filter(
-    (hw) => normLow(hw.status) === "submitted" || !normLow(hw.status)
-  ).length;
+  const pendingCount = teacherHomeworksActive.filter((hw) => {
+    const s = normLow(hw.status);
+    return s === "examination" || !s;
+  }).length;
 
   const acceptedCount = teacherHomeworksActive.filter((hw) => normLow(hw.status) === "accepted").length;
 
   const filteredActive = useMemo(() => {
     if (homeworkFilter === "submitted")
-      return teacherHomeworksActive.filter(
-        (hw) => normLow(hw.status) === "submitted" || !normLow(hw.status)
-      );
+      return teacherHomeworksActive.filter((hw) => {
+        const s = normLow(hw.status);
+        return s === "examination" || !s;
+      });
     if (homeworkFilter === "accepted")
       return teacherHomeworksActive.filter((hw) => normLow(hw.status) === "accepted");
     return teacherHomeworksActive;
@@ -857,8 +908,8 @@ export function TeacherDashboard() {
     }
     for (const [sid, arr] of map.entries()) {
       arr.sort((a, b) => {
-        const pa = normLow(a.status) === "submitted" || !normLow(a.status) ? 0 : 1;
-        const pb = normLow(b.status) === "submitted" || !normLow(b.status) ? 0 : 1;
+        const pa = normLow(a.status) === "examination" || !normLow(a.status) ? 0 : 1;
+        const pb = normLow(b.status) === "examination" || !normLow(b.status) ? 0 : 1;
         return pa - pb;
       });
       map.set(sid, arr);
@@ -1304,7 +1355,7 @@ export function TeacherDashboard() {
       const payload = {
         title: norm(editLessonForm.title),
         description: norm(editLessonForm.description),
-        order: orderValue, // ✅ order
+        order: orderValue,
         homework_description: norm(editLessonForm.homeworkDescription),
         ...(editLessonForm.videoFile ? { video_file: editLessonForm.videoFile } : {}),
         ...(editLessonForm.homeworkFile ? { homework_file: editLessonForm.homeworkFile } : {}),
@@ -1320,7 +1371,6 @@ export function TeacherDashboard() {
       closeEditLessonModal();
       await loadTeacherLessons?.();
 
-      // ✅ после сохранения — дергаем refresh-status (если есть)
       if (youtubeRefreshLessonStatus) {
         await youtubeRefreshLessonStatus(editLessonId);
         await loadTeacherLessons?.();
@@ -1389,7 +1439,8 @@ export function TeacherDashboard() {
     }
 
     const orderNum = Number(addForm.order);
-    const orderValue = String(addForm.order).trim() === "" || !Number.isFinite(orderNum) ? undefined : orderNum;
+    const orderValue =
+      String(addForm.order).trim() === "" || !Number.isFinite(orderNum) ? undefined : orderNum;
 
     setIsAddingLesson(true);
     try {
@@ -1397,7 +1448,7 @@ export function TeacherDashboard() {
         course: Number(cid),
         title,
         description: norm(addForm.description),
-        order: orderValue, // ✅ order
+        order: orderValue,
         video_file: addForm.videoFile,
         homework_description: norm(addForm.homeworkDescription),
         ...(addForm.homeworkFile ? { homework_file: addForm.homeworkFile } : {}),
@@ -1426,7 +1477,6 @@ export function TeacherDashboard() {
       setTab("courses");
       await loadTeacherLessons?.();
 
-      // ✅ после добавления — дергаем batch refresh (или одиночный если получится)
       if (youtubeRefreshStatusBatch) {
         const ids = (Array.isArray(normalizedLessons) ? normalizedLessons : [])
           .map((l) => normalizeLessonId(l))
@@ -1470,7 +1520,6 @@ export function TeacherDashboard() {
     (courseId) => {
       const cid = String(courseId);
       const arr = normalizedLessons.filter((l) => normalizeLessonCourseId(l) === cid);
-      // ✅ сортировка по order
       return [...arr].sort((a, b) => {
         const ao = Number(a?.order);
         const bo = Number(b?.order);
@@ -1600,9 +1649,10 @@ export function TeacherDashboard() {
             ) : (
               Array.from(groupedByStudent.entries()).map(([studentId, list]) => {
                 const isOpen = !!expandedStudents[studentId];
-                const submitted = list.filter(
-                  (x) => normLow(x.status) === "submitted" || !normLow(x.status)
-                ).length;
+                const submitted = list.filter((x) => {
+                  const s = normLow(x.status);
+                  return s === "examination" || !s;
+                }).length;
 
                 return (
                   <Card key={studentId}>
@@ -1829,7 +1879,11 @@ export function TeacherDashboard() {
                                     </div>
 
                                     <div className="flex items-center gap-2">
-                                      <Button variant="outline" size="sm" onClick={() => refreshOneLessonStatus(lid)}>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => refreshOneLessonStatus(lid)}
+                                      >
                                         <RefreshCw className="w-4 h-4 mr-2" />
                                         Статус
                                       </Button>
@@ -2148,7 +2202,7 @@ export function TeacherDashboard() {
           <div className="space-y-3">
             {editCourseForm.photoUrl ? (
               <div className="rounded-xl overflow-hidden border bg-black">
-                <img src={editCourseForm.photoUrl} alt="course" className="w-full h-[140px] object-cover" />
+                <img src={toAbsUrl(editCourseForm.photoUrl)} alt="course" className="w-full h-[140px] object-cover" />
               </div>
             ) : null}
 

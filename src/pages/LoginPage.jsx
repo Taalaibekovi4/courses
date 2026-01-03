@@ -14,12 +14,40 @@ import {
 import { Alert, AlertDescription } from "../components/ui/alert.jsx";
 
 const norm = (s) => String(s ?? "").trim();
+const normLow = (s) => norm(s).toLowerCase();
 
 function getAfterLoginPath(role) {
-  const r = norm(role).toLowerCase();
-  if (r === "teacher" || r === "admin") return "/teacher";
+  const r = normLow(role);
+  if (r === "teacher") return "/teacher";
+  if (r === "admin") return "/Analystic";
   if (r === "student") return "/dashboard";
   return "/";
+}
+
+/**
+ * ✅ ВСЕГДА возвращает чистый текст без `non_field_errors:`
+ */
+function extractErrorMessage(err) {
+  const d = err?.response?.data;
+
+  // если сервер вернул строку
+  if (typeof d === "string") {
+    return d
+      .replace(/^non_field_errors\s*:\s*/i, "")
+      .trim() || "Неверный email или пароль.";
+  }
+
+  // DRF: { non_field_errors: ["..."] }
+  if (Array.isArray(d?.non_field_errors) && d.non_field_errors[0]) {
+    return String(d.non_field_errors[0]).trim();
+  }
+
+  // DRF: { detail: "..." }
+  if (d?.detail) {
+    return String(d.detail).trim();
+  }
+
+  return "Неверный email или пароль.";
 }
 
 export function LoginPage() {
@@ -36,9 +64,9 @@ export function LoginPage() {
     return !!norm(email) && !!norm(password) && !pending && !isLoading;
   }, [email, password, pending, isLoading]);
 
+  // ✅ редирект только если реально залогинен
   useEffect(() => {
-    // Если уже залогинен — не держим на /login
-    if (!isLoading && user) {
+    if (!isLoading && user?.role) {
       navigate(getAfterLoginPath(user.role), { replace: true });
     }
   }, [isLoading, user, navigate]);
@@ -51,16 +79,28 @@ export function LoginPage() {
     setPending(true);
 
     try {
-      const ok = await login(norm(email), password);
+      const result = await login(norm(email), password);
 
-      if (!ok) {
-        setError("Неверный email или пароль");
+      // login() вернул true → всё ок, редирект будет в useEffect
+      if (result === true) return;
+
+      // если login() вернул объект с ошибкой
+      if (result && typeof result === "object") {
+        const msg =
+          result.error ||
+          result.detail ||
+          result.message ||
+          "Неверный email или пароль.";
+        setError(
+          String(msg).replace(/^non_field_errors\s*:\s*/i, "").trim()
+        );
         return;
       }
 
-      // роли подтянутся в AuthContext через /auth/me/
-      // но на всякий случай направим на главную, дальше useEffect отработает
-      navigate("/", { replace: true });
+      // false / undefined
+      setError("Неверный email или пароль.");
+    } catch (err) {
+      setError(extractErrorMessage(err));
     } finally {
       setPending(false);
     }
@@ -71,7 +111,9 @@ export function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>Вход в систему</CardTitle>
-          <CardDescription>Войдите в аккаунт для доступа к курсам</CardDescription>
+          <CardDescription>
+            Войдите в аккаунт для доступа к курсам
+          </CardDescription>
         </CardHeader>
 
         <CardContent>
@@ -88,7 +130,6 @@ export function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 type="email"
-                placeholder="name@example.com"
                 autoComplete="email"
                 required
                 disabled={pending || isLoading}
@@ -101,7 +142,6 @@ export function LoginPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Введите пароль"
                 autoComplete="current-password"
                 required
                 disabled={pending || isLoading}
@@ -115,7 +155,10 @@ export function LoginPage() {
 
           <div className="mt-5 text-sm text-gray-600 text-center">
             Нет аккаунта?{" "}
-            <Link to="/register" className="text-blue-700 hover:underline font-medium">
+            <Link
+              to="/register"
+              className="text-blue-700 hover:underline font-medium"
+            >
               Регистрация
             </Link>
           </div>
