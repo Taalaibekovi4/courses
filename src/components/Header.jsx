@@ -36,8 +36,20 @@ function getRoleLabel(role) {
   return "Студент";
 }
 
-function getInitials(name) {
-  const s = str(name);
+/** ✅ Берём имя из first_name (как ты просил) */
+function getUserDisplayName(user) {
+  if (!user) return "";
+  return (
+    str(user.first_name) ||
+    str(user.name) ||
+    str(user.username) ||
+    str(user.email) ||
+    ""
+  );
+}
+
+function getInitialsFromUser(user) {
+  const s = str(getUserDisplayName(user));
   if (!s) return "U";
   const parts = s.split(/\s+/).filter(Boolean);
   const first = parts[0]?.[0] || "U";
@@ -161,7 +173,7 @@ export function Header() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const isHome = location.pathname === "/"; // оставили для anchor-навигации
+  const isHome = location.pathname === "/";
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [logoUrl, setLogoUrl] = useState("");
@@ -176,6 +188,9 @@ export function Header() {
   const showCabinet = useMemo(() => !!user && !showAdmin, [user, showAdmin]);
   const cabinetTo = useMemo(() => getCabinetLink(user), [user]);
   const cabinetLabel = useMemo(() => getCabinetLabel(user), [user]);
+
+  /** ✅ имя пользователя (first_name) */
+  const displayName = useMemo(() => getUserDisplayName(user), [user]);
 
   // обычные страницы (ссылки)
   const navItemsNormal = useMemo(
@@ -351,7 +366,12 @@ export function Header() {
         <div className="relative">
           <div className="app-container py-3 flex items-center justify-between">
             <Link to="/" className="flex items-center gap-2 group" onClick={handleLogoClick}>
-              <span className={["w-10 h-10 rounded-[10%] flex items-center justify-center shadow-sm overflow-hidden", logoWrapClass].join(" ")}>
+              <span
+                className={[
+                  "w-10 h-10 rounded-[10%] flex items-center justify-center shadow-sm overflow-hidden",
+                  logoWrapClass,
+                ].join(" ")}
+              >
                 {logoUrl && (
                   <img
                     src={logoUrl}
@@ -426,10 +446,12 @@ export function Header() {
 
                   <div className="flex items-center gap-2 px-2 py-1 rounded-lg bg-white/10 border border-white/10">
                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center text-xs font-bold">
-                      {getInitials(user.name)}
+                      {getInitialsFromUser(user)}
                     </div>
                     <div className="leading-tight pr-1">
-                      <div className="text-sm font-medium max-w-[160px] truncate text-white">{user.name}</div>
+                      <div className="text-sm font-medium max-w-[160px] truncate text-white">
+                        {displayName || "Пользователь"}
+                      </div>
                       <div className="text-[11px] -mt-0.5 text-white/70">{getRoleLabel(user.role)}</div>
                     </div>
                   </div>
@@ -513,7 +535,11 @@ export function Header() {
                   <div className="flex flex-col gap-2">
                     {showCabinet && (
                       <Link to={cabinetTo} onClick={closeMobile}>
-                        <Button variant="ghost" size="sm" className="w-full justify-start rounded-lg text-white hover:bg-white/10">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="w-full justify-start rounded-lg text-white hover:bg-white/10"
+                        >
                           <LayoutDashboard className="w-4 h-4 mr-2" />
                           {cabinetLabel}
                         </Button>
@@ -522,7 +548,10 @@ export function Header() {
 
                     {showAdmin && (
                       <Link to="/Analystic" onClick={closeMobile}>
-                        <Button size="sm" className="w-full justify-start rounded-lg bg-[#FFD70A] text-black hover:bg-[#ffde33] font-bold">
+                        <Button
+                          size="sm"
+                          className="w-full justify-start rounded-lg bg-[#FFD70A] text-black hover:bg-[#ffde33] font-bold"
+                        >
                           <Shield className="w-4 h-4 mr-2" />
                           Админка
                         </Button>
@@ -531,10 +560,12 @@ export function Header() {
 
                     <div className="flex items-center gap-2 px-2 py-2 rounded-lg bg-white/10 border border-white/10">
                       <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center text-xs font-bold">
-                        {getInitials(user.name)}
+                        {getInitialsFromUser(user)}
                       </div>
                       <div className="leading-tight pr-1">
-                        <div className="text-sm font-medium max-w-[220px] truncate text-white">{user.name}</div>
+                        <div className="text-sm font-medium max-w-[220px] truncate text-white">
+                          {displayName || "Пользователь"}
+                        </div>
                         <div className="text-[11px] -mt-0.5 text-white/70">{getRoleLabel(user.role)}</div>
                       </div>
                     </div>
@@ -551,7 +582,9 @@ export function Header() {
                   </div>
                 ) : (
                   <Link to="/login" onClick={closeMobile}>
-                    <Button className="w-full rounded-lg bg-[#FFD70A] text-black hover:bg-[#ffde33] font-bold">Войти</Button>
+                    <Button className="w-full rounded-lg bg-[#FFD70A] text-black hover:bg-[#ffde33] font-bold">
+                      Войти
+                    </Button>
                   </Link>
                 )}
               </div>

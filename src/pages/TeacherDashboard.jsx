@@ -182,37 +182,30 @@ function unlockBodyScroll() {
    - youtube url/id -> <iframe>
    ========================= */
 function extractYouTubeId(input) {
-  const v = norm(input);
-  if (!v) return "";
+  const s = norm(input);
+  if (!s) return "";
 
-  if (/^[a-zA-Z0-9_-]{6,}$/.test(v) && !v.includes("/") && !v.includes(".")) {
-    return v;
-  }
+  // ✅ строго 11 символов
+  if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
 
-  try {
-    const u = new URL(v);
-    const host = (u.hostname || "").toLowerCase();
+  const short = s.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+  if (short?.[1]) return short[1];
 
-    if (host.includes("youtu.be")) {
-      const id = u.pathname.replace("/", "");
-      return id || "";
-    }
+  const v = s.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+  if (v?.[1]) return v[1];
 
-    if (host.includes("youtube.com")) {
-      const id = u.searchParams.get("v");
-      if (id) return id;
+  const emb = s.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/);
+  if (emb?.[1]) return emb[1];
 
-      const parts = u.pathname.split("/").filter(Boolean);
-      const idx = parts.findIndex((p) => p === "embed");
-      if (idx >= 0 && parts[idx + 1]) return parts[idx + 1];
+  const shorts = s.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/);
+  if (shorts?.[1]) return shorts[1];
 
-      const sidx = parts.findIndex((p) => p === "shorts");
-      if (sidx >= 0 && parts[sidx + 1]) return parts[sidx + 1];
-    }
-  } catch (_) {}
+  const live = s.match(/youtube\.com\/live\/([a-zA-Z0-9_-]{11})/);
+  if (live?.[1]) return live[1];
 
   return "";
 }
+
 
 function isDirectVideoUrl(input) {
   const v = normLow(input);
@@ -244,9 +237,11 @@ function VideoPreview({ source, className = "", heightClass = "h-[160px]" }) {
     );
   }
 
-  // ✅ делаем абсолютный урл как на CoursePage
+  // ✅ сначала парсим YouTube из raw (если это id или ссылка)
+  const ytId = extractYouTubeId(raw);
+
+  // ✅ потом делаем абсолютный урл (для /media/...)
   const src = toAbsUrl(raw);
-  const ytId = extractYouTubeId(src) || extractYouTubeId(raw);
 
   if (ytId) {
     const embed = `https://www.youtube-nocookie.com/embed/${ytId}?rel=0&modestbranding=1&playsinline=1`;
@@ -256,19 +251,14 @@ function VideoPreview({ source, className = "", heightClass = "h-[160px]" }) {
           title="YouTube preview"
           src={embed}
           className={`w-full ${heightClass}`}
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allow="autoplay; encrypted-media; picture-in-picture"
           allowFullScreen
         />
       </div>
     );
   }
 
-  if (
-    isDirectVideoUrl(src) ||
-    src.startsWith("http://") ||
-    src.startsWith("https://") ||
-    src.startsWith("blob:")
-  ) {
+  if (isDirectVideoUrl(src) || src.startsWith("http://") || src.startsWith("https://") || src.startsWith("blob:")) {
     return (
       <div className={`rounded-lg overflow-hidden bg-black border ${className}`}>
         <video
@@ -289,6 +279,7 @@ function VideoPreview({ source, className = "", heightClass = "h-[160px]" }) {
     </div>
   );
 }
+
 
 /* =========================
    SearchableSelectSingle — НЕ portal
