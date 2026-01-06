@@ -19,6 +19,7 @@ import {
   Trash2,
   Image as ImageIcon,
   RefreshCw,
+  Link as LinkIcon,
 } from "lucide-react";
 
 import { useAuth } from "../contexts/AuthContext.jsx";
@@ -37,8 +38,8 @@ const normLow = (s) => norm(s).toLowerCase();
 const LS_TEACHER_HW_ARCHIVE = "teacher_hw_archive_v1";
 
 /* =========================
-   ✅ ABS URL helper (как в CoursePage)
-   + ✅ FIX DEV: /media/... оставляем относительным, чтобы vite proxy работал и CORS не было
+   ABS URL helper
+   + FIX DEV: /media/... оставляем относительным, чтобы vite proxy работал и CORS не было
    ========================= */
 const API_BASE_RAW =
   (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) || "";
@@ -46,13 +47,12 @@ const API_BASE_RAW =
 const API_ORIGIN = norm(API_BASE_RAW).replace(/\/api\/?$/i, "").replace(/\/$/, "");
 const IS_DEV = typeof import.meta !== "undefined" && import.meta.env && import.meta.env.DEV;
 
-function toAbsUrl(url) {
+const toAbsUrl = (url) => {
   const u = norm(url);
   if (!u) return "";
   if (/^https?:\/\//i.test(u)) return u;
   if (u.startsWith("//")) return `https:${u}`;
 
-  // ✅ DEV: /media/... пусть останется относительным => запрос пойдет через vite proxy
   if (IS_DEV && u.startsWith("/media/")) return u;
 
   if (u.startsWith("/")) {
@@ -61,34 +61,34 @@ function toAbsUrl(url) {
   }
   if (API_ORIGIN) return `${API_ORIGIN}/${u}`;
   return u;
-}
+};
 
-function safeJsonParse(s, fallback) {
+const safeJsonParse = (s, fallback) => {
   try {
     const v = JSON.parse(s);
     return v ?? fallback;
   } catch (_) {
     return fallback;
   }
-}
+};
 
-function getTeacherArchivedSet(teacherId) {
+const getTeacherArchivedSet = (teacherId) => {
   const raw = localStorage.getItem(LS_TEACHER_HW_ARCHIVE) || "{}";
   const obj = safeJsonParse(raw, {});
   const key = String(teacherId || "0");
   const arr = Array.isArray(obj[key]) ? obj[key] : [];
   return new Set(arr.map(String));
-}
+};
 
-function setTeacherArchivedSet(teacherId, set) {
+const setTeacherArchivedSet = (teacherId, set) => {
   const raw = localStorage.getItem(LS_TEACHER_HW_ARCHIVE) || "{}";
   const obj = safeJsonParse(raw, {});
   const key = String(teacherId || "0");
   obj[key] = Array.from(set);
   localStorage.setItem(LS_TEACHER_HW_ARCHIVE, JSON.stringify(obj));
-}
+};
 
-function StatusBadge({ status }) {
+const StatusBadge = ({ status }) => {
   const s = normLow(status);
 
   if (s === "accepted")
@@ -97,25 +97,24 @@ function StatusBadge({ status }) {
     return <Badge className="bg-orange-600 text-white border-transparent">На доработку</Badge>;
   if (s === "declined") return <Badge variant="destructive">Отклонено</Badge>;
 
-  // ✅ API присылает "examination" как "на проверке"
   if (s === "examination" || !s) return <Badge variant="secondary">На проверке</Badge>;
 
   return <Badge variant="outline">—</Badge>;
-}
+};
 
 /* =========================
    YouTube status badge
    ========================= */
-function YouTubeStatusBadge({ status, error }) {
+const YouTubeStatusBadge = ({ status, error }) => {
   const s = normLow(status);
 
   if (!s) return <Badge variant="outline">—</Badge>;
   if (s === "ready" || s === "completed" || s === "success")
-    return <Badge className="bg-green-600 text-white border-transparent"> готово</Badge>;
+    return <Badge className="bg-green-600 text-white border-transparent">готово</Badge>;
   if (s === "processing" || s === "pending")
-    return <Badge className="bg-orange-600 text-white border-transparent"> обработка</Badge>;
+    return <Badge className="bg-orange-600 text-white border-transparent">обработка</Badge>;
   if (s === "uploading")
-    return <Badge className="bg-blue-600 text-white border-transparent"> загрузка</Badge>;
+    return <Badge className="bg-blue-600 text-white border-transparent">загрузка</Badge>;
   if (s === "error" || s === "failed")
     return (
       <Badge variant="destructive" title={norm(error) || ""}>
@@ -123,29 +122,29 @@ function YouTubeStatusBadge({ status, error }) {
       </Badge>
     );
 
-  return <Badge variant="secondary"> {status}</Badge>;
-}
+  return <Badge variant="secondary">{status}</Badge>;
+};
 
 /* =========================
    Scrollbar hide helper
    ========================= */
-function GlobalNoScrollbarStyle() {
+const GlobalNoScrollbarStyle = () => {
   return (
     <style>{`
       .sb-no-scrollbar::-webkit-scrollbar{ width:0px; height:0px; }
       .sb-no-scrollbar{ scrollbar-width:none; -ms-overflow-style:none; }
     `}</style>
   );
-}
+};
 
 /* =========================
-   Body scroll lock (FIX!)
+   Body scroll lock
    ========================= */
 let __sbLockCount = 0;
 let __sbPrevOverflow = "";
 let __sbPrevPadRight = "";
 
-function lockBodyScroll() {
+const lockBodyScroll = () => {
   try {
     const body = document.body;
     if (!body) return;
@@ -161,9 +160,9 @@ function lockBodyScroll() {
     }
     __sbLockCount += 1;
   } catch (_) {}
-}
+};
 
-function unlockBodyScroll() {
+const unlockBodyScroll = () => {
   try {
     const body = document.body;
     if (!body) return;
@@ -174,18 +173,17 @@ function unlockBodyScroll() {
       body.style.paddingRight = __sbPrevPadRight;
     }
   } catch (_) {}
-}
+};
 
 /* =========================
    Video preview (teacher)
-   - mp4/webm/ogg/blob -> <video>
    - youtube url/id -> <iframe>
+   - mp4/webm/ogg/blob or /media/... -> <video>
    ========================= */
-function extractYouTubeId(input) {
+const extractYouTubeId = (input) => {
   const s = norm(input);
   if (!s) return "";
 
-  // ✅ строго 11 символов
   if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
 
   const short = s.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
@@ -204,15 +202,12 @@ function extractYouTubeId(input) {
   if (live?.[1]) return live[1];
 
   return "";
-}
+};
 
-
-function isDirectVideoUrl(input) {
+const isDirectVideoUrl = (input) => {
   const v = normLow(input);
   if (!v) return false;
   if (v.startsWith("blob:")) return true;
-
-  // ✅ серверные /media/... тоже считаем видео
   if (v.startsWith("/media/") || v.includes("/media/")) return true;
 
   return (
@@ -223,9 +218,9 @@ function isDirectVideoUrl(input) {
     v.includes(".webm?") ||
     v.includes(".ogg?")
   );
-}
+};
 
-function VideoPreview({ source, className = "", heightClass = "h-[160px]" }) {
+const VideoPreview = ({ source, className = "", heightClass = "h-[160px]" }) => {
   const raw = norm(source);
   if (!raw) {
     return (
@@ -237,10 +232,7 @@ function VideoPreview({ source, className = "", heightClass = "h-[160px]" }) {
     );
   }
 
-  // ✅ сначала парсим YouTube из raw (если это id или ссылка)
   const ytId = extractYouTubeId(raw);
-
-  // ✅ потом делаем абсолютный урл (для /media/...)
   const src = toAbsUrl(raw);
 
   if (ytId) {
@@ -261,12 +253,7 @@ function VideoPreview({ source, className = "", heightClass = "h-[160px]" }) {
   if (isDirectVideoUrl(src) || src.startsWith("http://") || src.startsWith("https://") || src.startsWith("blob:")) {
     return (
       <div className={`rounded-lg overflow-hidden bg-black border ${className}`}>
-        <video
-          src={src}
-          controls
-          className={`w-full ${heightClass} object-cover bg-black`}
-          preload="metadata"
-        />
+        <video src={src} controls className={`w-full ${heightClass} object-cover bg-black`} preload="metadata" />
       </div>
     );
   }
@@ -278,13 +265,12 @@ function VideoPreview({ source, className = "", heightClass = "h-[160px]" }) {
       Видео недоступно для предпросмотра
     </div>
   );
-}
-
+};
 
 /* =========================
    SearchableSelectSingle — НЕ portal
    ========================= */
-function SearchableSelectSingle({
+const SearchableSelectSingle = ({
   value,
   onChange,
   options,
@@ -294,7 +280,7 @@ function SearchableSelectSingle({
   getLabel = (o) => o?.label ?? "",
   getValue = (o) => o?.value ?? "",
   className = "",
-}) {
+}) => {
   const wrapRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -384,11 +370,7 @@ function SearchableSelectSingle({
           </div>
 
           <div className="max-h-64 overflow-auto sb-no-scrollbar">
-            <button
-              type="button"
-              onClick={() => pick("")}
-              className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
-            >
+            <button type="button" onClick={() => pick("")} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50">
               {placeholder}
             </button>
 
@@ -402,30 +384,25 @@ function SearchableSelectSingle({
                   key={v}
                   type="button"
                   onClick={() => pick(v)}
-                  className={[
-                    "w-full text-left px-3 py-2 text-sm hover:bg-gray-50",
-                    isActive ? "bg-blue-50" : "",
-                  ].join(" ")}
+                  className={["w-full text-left px-3 py-2 text-sm hover:bg-gray-50", isActive ? "bg-blue-50" : ""].join(" ")}
                 >
                   {label}
                 </button>
               );
             })}
 
-            {filtered.length === 0 && (
-              <div className="px-3 py-3 text-sm text-gray-500">Ничего не найдено</div>
-            )}
+            {filtered.length === 0 && <div className="px-3 py-3 text-sm text-gray-500">Ничего не найдено</div>}
           </div>
         </div>
       )}
     </div>
   );
-}
+};
 
 /* =========================
    Attachments view
    ========================= */
-function AttachmentsView({ attachments }) {
+const AttachmentsView = ({ attachments }) => {
   const list = Array.isArray(attachments) ? attachments : [];
   if (!list.length) return null;
 
@@ -442,12 +419,7 @@ function AttachmentsView({ attachments }) {
           return (
             <div key={key} className="text-sm">
               {url ? (
-                <a
-                  href={toAbsUrl(url)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-blue-600 hover:underline break-all"
-                >
+                <a href={toAbsUrl(url)} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline break-all">
                   {isLink ? "🔗 " : "📎 "}
                   {name}
                 </a>
@@ -460,12 +432,12 @@ function AttachmentsView({ attachments }) {
       </div>
     </div>
   );
-}
+};
 
 /* =========================
    Homework materials single file
    ========================= */
-function LessonHomeworkMaterialsSingle({ file, existingUrl, onPick, onClear }) {
+const LessonHomeworkMaterialsSingle = ({ file, existingUrl, onPick, onClear }) => {
   const fileRef = useRef(null);
 
   return (
@@ -475,12 +447,7 @@ function LessonHomeworkMaterialsSingle({ file, existingUrl, onPick, onClear }) {
       {existingUrl ? (
         <div className="text-sm">
           Текущий файл:{" "}
-          <a
-            href={toAbsUrl(existingUrl)}
-            target="_blank"
-            rel="noreferrer"
-            className="text-blue-600 hover:underline break-all"
-          >
+          <a href={toAbsUrl(existingUrl)} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline break-all">
             Открыть
           </a>
         </div>
@@ -521,12 +488,12 @@ function LessonHomeworkMaterialsSingle({ file, existingUrl, onPick, onClear }) {
       )}
     </div>
   );
-}
+};
 
 /* =========================
-   Modal (FIX scroll lock)
+   Modal
    ========================= */
-function Modal({ title, isOpen, onClose, children, closeOnOverlay = true }) {
+const Modal = ({ title, isOpen, onClose, children, closeOnOverlay = true }) => {
   useEffect(() => {
     if (!isOpen) return undefined;
     lockBodyScroll();
@@ -545,11 +512,7 @@ function Modal({ title, isOpen, onClose, children, closeOnOverlay = true }) {
   if (!isOpen) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center px-4"
-      role="dialog"
-      aria-modal="true"
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-black/60" onClick={closeOnOverlay ? onClose : undefined} />
       <div className="relative z-10 w-full max-w-md bg-white rounded-2xl overflow-hidden shadow-xl border">
         <div className="flex items-center justify-between px-4 py-3 border-b">
@@ -568,12 +531,12 @@ function Modal({ title, isOpen, onClose, children, closeOnOverlay = true }) {
       </div>
     </div>
   );
-}
+};
 
 /* =========================
-   Confirm modal (no window.confirm)
+   Confirm modal
    ========================= */
-function ConfirmModal({ isOpen, title, description, onCancel, onConfirm, confirmText = "Удалить" }) {
+const ConfirmModal = ({ isOpen, title, description, onCancel, onConfirm, confirmText = "Удалить" }) => {
   return (
     <Modal title={title} isOpen={isOpen} onClose={onCancel} closeOnOverlay={false}>
       <div className="space-y-4">
@@ -590,47 +553,31 @@ function ConfirmModal({ isOpen, title, description, onCancel, onConfirm, confirm
       </div>
     </Modal>
   );
-}
+};
 
 /* =========================
    Normalizers
    ========================= */
-function normalizeCourseId(c) {
-  const id = c?.id ?? c?.course_id ?? c?.pk ?? "";
-  return String(id || "");
-}
-function normalizeCategoryName(c) {
-  return c?.categoryName ?? c?.category_name ?? c?.category?.name ?? c?.category?.title ?? "";
-}
-function normalizeCourseTitle(c) {
-  return c?.title ?? c?.name ?? c?.course_title ?? "";
-}
-function normalizeLessonId(l) {
-  const id = l?.id ?? l?.pk ?? "";
-  return String(id || "");
-}
-function normalizeLessonTitle(l) {
-  return l?.title ?? l?.lesson_title ?? "";
-}
-function normalizeLessonCourseId(l) {
-  const c = l?.course;
-  const cid =
-    l?.courseId ??
-    l?.course_id ??
-    (c && typeof c === "object" ? c.id : c) ??
-    "";
-  return String(cid || "");
-}
+const normalizeCourseId = (c) => String(c?.id ?? c?.course_id ?? c?.pk ?? "");
+const normalizeCategoryName = (c) => c?.categoryName ?? c?.category_name ?? c?.category?.name ?? c?.category?.title ?? "";
+const normalizeCourseTitle = (c) => c?.title ?? c?.name ?? c?.course_title ?? "";
 
-function normalizeHomework(hw) {
+const normalizeLessonId = (l) => String(l?.id ?? l?.pk ?? "");
+const normalizeLessonTitle = (l) => l?.title ?? l?.lesson_title ?? "";
+const normalizeLessonCourseId = (l) => {
+  const c = l?.course;
+  const cid = l?.courseId ?? l?.course_id ?? (c && typeof c === "object" ? c.id : c) ?? "";
+  return String(cid || "");
+};
+
+const normalizeHomework = (hw) => {
   const id = hw?.id ?? "";
   const courseId = hw?.course_id ?? hw?.courseId ?? hw?.course ?? "";
   const courseTitle = hw?.course_title ?? hw?.courseTitle ?? "";
   const lessonId = hw?.lesson ?? hw?.lesson_id ?? hw?.lessonId ?? hw?.lesson?.id ?? "";
   const lessonTitle = hw?.lesson_title ?? hw?.lessonTitle ?? hw?.lesson?.title ?? "";
   const userId = hw?.user ?? hw?.userId ?? hw?.student ?? hw?.student_id ?? "";
-  const studentUsername =
-    hw?.student_username ?? hw?.studentUsername ?? hw?.username ?? hw?.student?.username ?? "";
+  const studentUsername = hw?.student_username ?? hw?.studentUsername ?? hw?.username ?? hw?.student?.username ?? "";
   const content = hw?.content ?? "";
   const status = hw?.status ?? "examination";
   const teacherComment = hw?.comment ?? hw?.teacherComment ?? "";
@@ -652,17 +599,11 @@ function normalizeHomework(hw) {
     reviewedAt: String(reviewedAt || ""),
     attachments: hw?.attachments ?? [],
   };
-}
+};
 
-/**
- * ✅ ВАЖНОЕ ИСПРАВЛЕНИЕ ДЛЯ "повторной отправки после rework/declined":
- * У студента может появляться НОВАЯ попытка по тому же уроку.
- * Чтобы у учителя НЕ висела старая "rework/declined" сверху — показываем ТОЛЬКО ПОСЛЕДНЮЮ попытку на урок.
- * Так повторная отправка будет видна как "На проверке" (examination), а старая попытка не мешает.
- */
-function pickLatestAttemptsByLesson(list) {
+const pickLatestAttemptsByLesson = (list) => {
   const arr = Array.isArray(list) ? list : [];
-  const map = new Map(); // lessonId -> hw
+  const map = new Map();
   for (const hw of arr) {
     const lid = String(hw?.lessonId || "");
     if (!lid) continue;
@@ -676,7 +617,6 @@ function pickLatestAttemptsByLesson(list) {
     const a = new Date(hw?.createdAt || 0).getTime();
     const b = new Date(prev?.createdAt || 0).getTime();
 
-    // если даты нет — подстрахуемся id
     if (a === b) {
       const ida = String(hw?.id || "");
       const idb = String(prev?.id || "");
@@ -686,20 +626,17 @@ function pickLatestAttemptsByLesson(list) {
     }
   }
   return Array.from(map.values());
-}
+};
 
-function isTeacherCanReview(status) {
+const isTeacherCanReview = (status) => {
   const s = normLow(status);
-  // ✅ можно проверять "на проверке", "на доработке", "отклонено"
-  // (часто это удобно: поменять решение или принять исправленное)
   return s === "examination" || s === "rework" || s === "declined" || !s;
-}
+};
 
 /* =========================
    ✅ NEW COURSE validation helper
-   Категория ОБЯЗАТЕЛЬНАЯ
    ========================= */
-function validateNewCourseForm({ title, categoryId, description, photo }) {
+const validateNewCourseForm = ({ title, categoryId, description, photo }) => {
   const errors = { title: "", category: "", description: "", photo: "" };
 
   const t = norm(title);
@@ -721,12 +658,81 @@ function validateNewCourseForm({ title, categoryId, description, photo }) {
 
   const ok = !errors.title && !errors.category && !errors.description && !errors.photo;
   return { ok, errors };
-}
+};
+
+/* =========================
+   ✅ Video link normalization for payload
+   - если YouTube -> youtube_video_id
+   - если direct link (/media/mp4/https) -> video_url
+   ========================= */
+const buildLessonVideoPayload = (videoInput) => {
+  const raw = norm(videoInput);
+  if (!raw) return { ok: false, error: "Добавьте ссылку на видео (YouTube или mp4/webm/ogg)." };
+
+  // Если это YouTube (url/shorts/live/id) — сохраняем в video_url
+  const ytId = extractYouTubeId(raw);
+  if (ytId) {
+    // если ввели только ID, соберём каноничную ссылку
+    const url = /^[a-zA-Z0-9_-]{11}$/.test(raw)
+      ? `https://youtu.be/${ytId}`
+      : raw;
+
+    return { ok: true, payload: { video_url: url } };
+  }
+
+  // Иначе — прямой файл/ссылка
+  const abs = toAbsUrl(raw);
+  if (
+    isDirectVideoUrl(abs) ||
+    abs.startsWith("http://") ||
+    abs.startsWith("https://") ||
+    abs.startsWith("/media/")
+  ) {
+    return { ok: true, payload: { video_url: abs } };
+  }
+
+  return {
+    ok: false,
+    error: "Неверная ссылка. Нужен YouTube URL/ID или прямая ссылка на mp4/webm/ogg (или /media/... ).",
+  };
+};
+/* =========================
+   ✅ getLessonVideoSource
+   Берём то, что реально приходит с бэка (разные варианты названий)
+   ========================= */
+const getLessonVideoSource = (lesson) => {
+  if (!lesson) return "";
+
+  const candidates = [
+    lesson.video_url,
+    lesson.videoUrl,
+    lesson.video,
+    lesson.video_link,
+    lesson.videoLink,
+    lesson.youtube_url,
+    lesson.youtubeUrl,
+    lesson.youtube_video_url,
+    lesson.youtubeVideoUrl,
+    lesson.youtube_video_id,
+    lesson.youtubeVideoId,
+  ]
+    .map((v) => norm(v))
+    .filter(Boolean);
+
+  if (!candidates.length) return "";
+
+  // если пришёл youtube id — превращаем в ссылку
+  const first = candidates[0];
+  const ytId = extractYouTubeId(first);
+  if (ytId && /^[a-zA-Z0-9_-]{11}$/.test(first)) return `https://youtu.be/${ytId}`;
+
+  return first;
+};
 
 /* =========================
    Teacher Dashboard
    ========================= */
-export function TeacherDashboard() {
+export function TeacherDashboard () {
   const { user } = useAuth();
   const data = useData();
 
@@ -770,7 +776,6 @@ export function TeacherDashboard() {
 
   const [archivedIds, setArchivedIds] = useState(() => new Set());
 
-  // YouTube project info
   const [ytProject, setYtProject] = useState({ loading: false, data: null });
 
   // NEW COURSE modal
@@ -780,7 +785,6 @@ export function TeacherDashboard() {
   const [newCourseDescription, setNewCourseDescription] = useState("");
   const [newCoursePhoto, setNewCoursePhoto] = useState(null);
 
-  // ✅ validation errors for NEW COURSE
   const [newCourseErrors, setNewCourseErrors] = useState({
     title: "",
     category: "",
@@ -806,8 +810,8 @@ export function TeacherDashboard() {
     title: "",
     description: "",
     order: "",
-    videoFile: null,
-    videoPreviewUrl: "",
+    // ✅ вместо file: ссылка на YouTube/прямой файл
+    videoLink: "",
     backendVideo: "",
     youtube_status: "",
     youtube_error: "",
@@ -822,8 +826,8 @@ export function TeacherDashboard() {
     title: "",
     description: "",
     order: "",
-    videoFile: null,
-    videoPreviewUrl: "",
+    // ✅ вместо file: ссылка на YouTube/прямой файл
+    videoLink: "",
     homeworkDescription: "",
     homeworkFile: null,
   });
@@ -861,24 +865,6 @@ export function TeacherDashboard() {
   }, [user?.id]);
 
   useEffect(() => {
-    // чистим blob urls на размонтаже
-    return () => {
-      if (addForm.videoPreviewUrl?.startsWith("blob:")) {
-        try {
-          URL.revokeObjectURL(addForm.videoPreviewUrl);
-        } catch (_) {}
-      }
-      if (editLessonForm.videoPreviewUrl?.startsWith("blob:")) {
-        try {
-          URL.revokeObjectURL(editLessonForm.videoPreviewUrl);
-        } catch (_) {}
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 🔥 ВАЖНО: пока идет загрузка видео — лочим body (и потом отпускаем)
-  useEffect(() => {
     if (!isAddingLesson) return undefined;
     lockBodyScroll();
     return () => unlockBodyScroll();
@@ -887,18 +873,12 @@ export function TeacherDashboard() {
   if (!user) return null;
 
   const normalizedCourses = useMemo(() => (Array.isArray(courses) ? courses : []), [courses]);
-  const normalizedLessons = useMemo(
-    () => (Array.isArray(teacherLessons) ? teacherLessons : []),
-    [teacherLessons]
-  );
+  const normalizedLessons = useMemo(() => (Array.isArray(teacherLessons) ? teacherLessons : []), [teacherLessons]);
   const normalizedHomeworks = useMemo(
     () => (Array.isArray(teacherHomeworks) ? teacherHomeworks : []).map(normalizeHomework),
     [teacherHomeworks]
   );
 
-  /* =========================================================
-     ✅ ЖЁСТКО: показываем ТОЛЬКО свои курсы
-     ========================================================= */
   const teacherCourses = useMemo(() => {
     const uid = String(user.id);
     const list = normalizedCourses;
@@ -928,31 +908,18 @@ export function TeacherDashboard() {
     return list.filter((c) => myCourseIds.has(String(normalizeCourseId(c))));
   }, [normalizedCourses, normalizedLessons, user.id]);
 
-  const teacherCourseIds = useMemo(
-    () => new Set(teacherCourses.map((c) => normalizeCourseId(c))),
-    [teacherCourses]
-  );
+  const teacherCourseIds = useMemo(() => new Set(teacherCourses.map((c) => normalizeCourseId(c))), [teacherCourses]);
 
   const homeworksSafe = useMemo(() => {
     if (teacherCourseIds.size === 0) return [];
     return normalizedHomeworks.filter((hw) => teacherCourseIds.has(String(hw.courseId)));
   }, [normalizedHomeworks, teacherCourseIds]);
 
-  const teacherHomeworksActiveRaw = useMemo(() => {
-    return homeworksSafe.filter((hw) => !archivedIds.has(String(hw.id)));
-  }, [homeworksSafe, archivedIds]);
+  const teacherHomeworksActiveRaw = useMemo(() => homeworksSafe.filter((hw) => !archivedIds.has(String(hw.id))), [homeworksSafe, archivedIds]);
+  const teacherHomeworksArchivedRaw = useMemo(() => homeworksSafe.filter((hw) => archivedIds.has(String(hw.id))), [homeworksSafe, archivedIds]);
 
-  const teacherHomeworksArchivedRaw = useMemo(() => {
-    return homeworksSafe.filter((hw) => archivedIds.has(String(hw.id)));
-  }, [homeworksSafe, archivedIds]);
-
-  /**
-   * ✅ ГЛАВНОЕ:
-   * Показываем учителю только последнюю попытку по каждому уроку у каждого студента.
-   * Тогда после "rework/declined" студент отправит заново — новая попытка появится как "На проверке".
-   */
   const teacherHomeworksActive = useMemo(() => {
-    const map = new Map(); // studentId -> list
+    const map = new Map();
     for (const hw of teacherHomeworksActiveRaw) {
       const sid = String(hw.userId || "unknown");
       if (!map.has(sid)) map.set(sid, []);
@@ -960,16 +927,13 @@ export function TeacherDashboard() {
     }
     const out = [];
     for (const [, list] of map.entries()) {
-      const latest = pickLatestAttemptsByLesson(list);
-      out.push(...latest);
+      out.push(...pickLatestAttemptsByLesson(list));
     }
     return out;
   }, [teacherHomeworksActiveRaw]);
 
   const teacherHomeworksArchived = useMemo(() => {
-    // в архиве тоже лучше показывать последнюю по уроку (чтобы не было каши),
-    // но если хочешь видеть ВСЕ — замени на teacherHomeworksArchivedRaw.
-    const map = new Map(); // studentId -> list
+    const map = new Map();
     for (const hw of teacherHomeworksArchivedRaw) {
       const sid = String(hw.userId || "unknown");
       if (!map.has(sid)) map.set(sid, []);
@@ -977,8 +941,7 @@ export function TeacherDashboard() {
     }
     const out = [];
     for (const [, list] of map.entries()) {
-      const latest = pickLatestAttemptsByLesson(list);
-      out.push(...latest);
+      out.push(...pickLatestAttemptsByLesson(list));
     }
     return out;
   }, [teacherHomeworksArchivedRaw]);
@@ -991,13 +954,13 @@ export function TeacherDashboard() {
   const acceptedCount = teacherHomeworksActive.filter((hw) => normLow(hw.status) === "accepted").length;
 
   const filteredActive = useMemo(() => {
-    if (homeworkFilter === "submitted")
+    if (homeworkFilter === "submitted") {
       return teacherHomeworksActive.filter((hw) => {
         const s = normLow(hw.status);
         return s === "examination" || !s;
       });
-    if (homeworkFilter === "accepted")
-      return teacherHomeworksActive.filter((hw) => normLow(hw.status) === "accepted");
+    }
+    if (homeworkFilter === "accepted") return teacherHomeworksActive.filter((hw) => normLow(hw.status) === "accepted");
     return teacherHomeworksActive;
   }, [teacherHomeworksActive, homeworkFilter]);
 
@@ -1011,12 +974,10 @@ export function TeacherDashboard() {
 
     for (const [sid, arr] of map.entries()) {
       arr.sort((a, b) => {
-        // "На проверке" выше остальных
         const pa = normLow(a.status) === "examination" || !normLow(a.status) ? 0 : 1;
         const pb = normLow(b.status) === "examination" || !normLow(b.status) ? 0 : 1;
         if (pa !== pb) return pa - pb;
 
-        // потом по дате (свежее выше)
         const ta = new Date(a.createdAt || 0).getTime();
         const tb = new Date(b.createdAt || 0).getTime();
         return tb - ta;
@@ -1053,67 +1014,84 @@ export function TeacherDashboard() {
 
   const setCommentFor = (id, text) => setComments((prev) => ({ ...prev, [id]: text }));
 
-  async function handleReview(homeworkId, status) {
-    const comment = norm(comments[homeworkId]);
-    if (!comment) {
-      toast.error("Комментарий обязателен (для студента это будет объяснение)");
-      return;
-    }
-    if (!reviewHomework) {
-      toast.error("reviewHomework не подключён в DataContext");
-      return;
-    }
-
-    try {
-      const res = await reviewHomework(homeworkId, status, comment);
-      if (res?.ok === false) {
-        toast.error(res?.error || "Не удалось сохранить проверку");
+  const handleReview = useCallback(
+    async (homeworkId, status) => {
+      const comment = norm(comments[homeworkId]);
+      if (!comment) {
+        toast.error("Комментарий обязателен (для студента это будет объяснение)");
         return;
       }
-      toast.success("Проверка сохранена");
-      setComments((prev) => ({ ...prev, [homeworkId]: "" }));
-      await loadTeacherHomeworks?.();
-    } catch (e) {
-      console.error(e);
-      toast.error("Ошибка при проверке");
-    }
-  }
+      if (!reviewHomework) {
+        toast.error("reviewHomework не подключён в DataContext");
+        return;
+      }
 
-  function archiveLocal(hwId) {
-    const id = String(hwId);
-    const next = new Set(archivedIds);
-    next.add(id);
-    setArchivedIds(next);
-    setTeacherArchivedSet(user.id, next);
-  }
+      try {
+        const res = await reviewHomework(homeworkId, status, comment);
+        if (res?.ok === false) {
+          toast.error(res?.error || "Не удалось сохранить проверку");
+          return;
+        }
+        toast.success("Проверка сохранена");
+        setComments((prev) => ({ ...prev, [homeworkId]: "" }));
+        await loadTeacherHomeworks?.();
+      } catch (e) {
+        console.error(e);
+        toast.error("Ошибка при проверке");
+      }
+    },
+    [comments, reviewHomework, loadTeacherHomeworks]
+  );
 
-  function unarchiveLocal(hwId) {
-    const id = String(hwId);
-    const next = new Set(archivedIds);
-    next.delete(id);
-    setArchivedIds(next);
-    setTeacherArchivedSet(user.id, next);
-  }
+  const archiveLocal = useCallback(
+    (hwId) => {
+      const id = String(hwId);
+      const next = new Set(archivedIds);
+      next.add(id);
+      setArchivedIds(next);
+      setTeacherArchivedSet(user.id, next);
+    },
+    [archivedIds, user.id]
+  );
 
-  async function handleArchive(hw) {
-    if (normLow(hw.status) !== "accepted") {
-      toast.error("В архив можно отправить только «Принято»");
-      return;
-    }
-    archiveLocal(hw.id);
-    toast.success("Отправлено в архив");
-  }
+  const unarchiveLocal = useCallback(
+    (hwId) => {
+      const id = String(hwId);
+      const next = new Set(archivedIds);
+      next.delete(id);
+      setArchivedIds(next);
+      setTeacherArchivedSet(user.id, next);
+    },
+    [archivedIds, user.id]
+  );
 
-  async function handleUnarchive(hwId) {
-    unarchiveLocal(hwId);
-    toast.success("Разархивировано");
-  }
+  const handleArchive = useCallback(
+    async (hw) => {
+      if (normLow(hw.status) !== "accepted") {
+        toast.error("В архив можно отправить только «Принято»");
+        return;
+      }
+      archiveLocal(hw.id);
+      toast.success("Отправлено в архив");
+    },
+    [archiveLocal]
+  );
 
-  const toggleStudent = (studentId) =>
+  const handleUnarchive = useCallback(
+    async (hwId) => {
+      unarchiveLocal(hwId);
+      toast.success("Разархивировано");
+    },
+    [unarchiveLocal]
+  );
+
+  const toggleStudent = useCallback((studentId) => {
     setExpandedStudents((prev) => ({ ...prev, [studentId]: !prev[studentId] }));
+  }, []);
 
-  const toggleArchiveStudent = (studentId) =>
+  const toggleArchiveStudent = useCallback((studentId) => {
     setExpandedArchiveStudents((prev) => ({ ...prev, [studentId]: !prev[studentId] }));
+  }, []);
 
   /* =========================
      YouTube helpers
@@ -1149,12 +1127,7 @@ export function TeacherDashboard() {
       }
 
       const url =
-        res?.data?.auth_url ||
-        res?.data?.url ||
-        res?.auth_url ||
-        res?.url ||
-        res?.data?.authorization_url ||
-        "";
+        res?.data?.auth_url || res?.data?.url || res?.auth_url || res?.url || res?.data?.authorization_url || "";
 
       if (!url) {
         toast.error("OAuth URL не вернулся с сервера");
@@ -1217,17 +1190,16 @@ export function TeacherDashboard() {
   /* =========================
      Courses
      ========================= */
-  function openAddCourse() {
+  const openAddCourse = useCallback(() => {
     setNewCourseTitle("");
     setNewCourseCategoryId("");
     setNewCourseDescription("");
     setNewCoursePhoto(null);
     setNewCourseErrors({ title: "", category: "", description: "", photo: "" });
     setIsAddCourseOpen(true);
-  }
+  }, []);
 
-  async function createNewCourse() {
-    // ✅ front validation (до запроса)
+  const createNewCourse = useCallback(async () => {
     const v = validateNewCourseForm({
       title: newCourseTitle,
       categoryId: newCourseCategoryId,
@@ -1251,7 +1223,7 @@ export function TeacherDashboard() {
       const payload = {
         title: norm(newCourseTitle),
         description: norm(newCourseDescription),
-        category: newCourseCategoryId, // ✅ обязательное
+        category: newCourseCategoryId,
         photo: newCoursePhoto || undefined,
       };
 
@@ -1282,9 +1254,16 @@ export function TeacherDashboard() {
       console.error(e);
       toast.error("Ошибка создания курса");
     }
-  }
+  }, [
+    addCourse,
+    loadPublic,
+    newCourseTitle,
+    newCourseDescription,
+    newCourseCategoryId,
+    newCoursePhoto,
+  ]);
 
-  function openEditCourse(course) {
+  const openEditCourse = useCallback((course) => {
     const id = normalizeCourseId(course);
     setEditCourseId(id);
 
@@ -1297,9 +1276,9 @@ export function TeacherDashboard() {
     });
 
     setIsEditCourseOpen(true);
-  }
+  }, []);
 
-  async function saveEditCourse() {
+  const saveEditCourse = useCallback(async () => {
     if (!editCourseId) return;
     if (!updateCourse) {
       toast.error("updateCourse не подключён в DataContext");
@@ -1333,18 +1312,18 @@ export function TeacherDashboard() {
       console.error(e);
       toast.error("Ошибка обновления курса");
     }
-  }
+  }, [editCourseId, updateCourse, editCourseForm, loadPublic]);
 
-  function askDeleteCourse(course) {
+  const askDeleteCourse = useCallback((course) => {
     const cid = String(normalizeCourseId(course) || "").trim();
     setConfirmDeleteCourse({
       open: true,
       courseId: cid,
       courseTitle: normalizeCourseTitle(course) || "Курс",
     });
-  }
+  }, []);
 
-  async function confirmDeleteCourseNow() {
+  const confirmDeleteCourseNow = useCallback(async () => {
     const { courseId } = confirmDeleteCourse;
     const cidRaw = String(courseId || "").trim();
     if (!cidRaw) return;
@@ -1379,53 +1358,45 @@ export function TeacherDashboard() {
       console.error(e);
       toast.error("Ошибка удаления курса");
     }
-  }
+  }, [confirmDeleteCourse, deleteCourse, loadPublic, loadTeacherLessons, loadTeacherHomeworks]);
 
   /* =========================
      Lessons
      ========================= */
-  function openEditLessonModal(lesson) {
-    const id = normalizeLessonId(lesson);
-    const backendVideo = norm(lesson?.video_url || lesson?.youtube_video_id || "");
-    const backendHomeworkFileUrl = norm(lesson?.homework_file || "");
+const openEditLessonModal = useCallback((lesson) => {
+  const id = normalizeLessonId(lesson);
 
-    if (editLessonForm.videoPreviewUrl?.startsWith("blob:")) {
-      try {
-        URL.revokeObjectURL(editLessonForm.videoPreviewUrl);
-      } catch (_) {}
-    }
+  const backendVideo = getLessonVideoSource(lesson); // ✅ правильно
 
-    setEditLessonId(id);
-    setEditLessonForm({
-      title: normalizeLessonTitle(lesson),
-      description: lesson?.description ?? "",
-      order: String(lesson?.order ?? ""),
-      videoFile: null,
-      videoPreviewUrl: "",
-      backendVideo,
-      youtube_status: lesson?.youtube_status ?? lesson?.youtubeStatus ?? "",
-      youtube_error: lesson?.youtube_error ?? lesson?.youtubeError ?? "",
-      homeworkDescription: lesson?.homework_description ?? "",
-      homeworkFile: null,
-      homeworkExistingFileUrl: backendHomeworkFileUrl,
-    });
-    setIsEditLessonOpen(true);
-  }
+  const backendHomeworkFileUrl = norm(lesson?.homework_file || "");
 
-  function closeEditLessonModal() {
-    if (editLessonForm.videoPreviewUrl?.startsWith("blob:")) {
-      try {
-        URL.revokeObjectURL(editLessonForm.videoPreviewUrl);
-      } catch (_) {}
-    }
+  setEditLessonId(id);
+  setEditLessonForm({
+    title: normalizeLessonTitle(lesson),
+    description: lesson?.description ?? "",
+    order: String(lesson?.order ?? ""),
+    videoLink: backendVideo,
+    backendVideo,
+    youtube_status: lesson?.youtube_status ?? lesson?.youtubeStatus ?? "",
+    youtube_error: lesson?.youtube_error ?? lesson?.youtubeError ?? "",
+    homeworkDescription: lesson?.homework_description ?? "",
+    homeworkFile: null,
+    homeworkExistingFileUrl: backendHomeworkFileUrl,
+  });
+
+  setIsEditLessonOpen(true);
+}, []);
+
+
+
+  const closeEditLessonModal = useCallback(() => {
     setIsEditLessonOpen(false);
     setEditLessonId("");
     setEditLessonForm({
       title: "",
       description: "",
       order: "",
-      videoFile: null,
-      videoPreviewUrl: "",
+      videoLink: "",
       backendVideo: "",
       youtube_status: "",
       youtube_error: "",
@@ -1433,52 +1404,24 @@ export function TeacherDashboard() {
       homeworkFile: null,
       homeworkExistingFileUrl: "",
     });
-  }
+  }, []);
 
-  function onPickEditVideo(file) {
-    if (!file) return;
-
-    if (editLessonForm.videoPreviewUrl?.startsWith("blob:")) {
-      try {
-        URL.revokeObjectURL(editLessonForm.videoPreviewUrl);
-      } catch (_) {}
-    }
-
-    const url = URL.createObjectURL(file);
-    setEditLessonForm((p) => ({
-      ...p,
-      videoFile: file,
-      videoPreviewUrl: url,
-      youtube_status: "uploading",
-      youtube_error: "",
-    }));
-    toast.success("Видео выбрано");
-  }
-
-  function onPickAddVideo(file) {
-    if (!file) return;
-
-    if (addForm.videoPreviewUrl?.startsWith("blob:")) {
-      try {
-        URL.revokeObjectURL(addForm.videoPreviewUrl);
-      } catch (_) {}
-    }
-
-    const url = URL.createObjectURL(file);
-    setAddForm((p) => ({ ...p, videoFile: file, videoPreviewUrl: url }));
-    toast.success("Видео выбрано");
-  }
-
-  async function saveEditLesson() {
+  const saveEditLesson = useCallback(async () => {
     if (!editLessonId) return;
     if (!updateLesson) {
       toast.error("updateLesson не подключён в DataContext");
       return;
     }
 
-    const hasVideo = !!editLessonForm.videoFile || !!editLessonForm.backendVideo;
-    if (!hasVideo) {
+    const videoInput = norm(editLessonForm.videoLink || editLessonForm.backendVideo);
+    if (!videoInput) {
       toast.error("Урок без видео нельзя сохранить");
+      return;
+    }
+
+    const videoPayload = buildLessonVideoPayload(videoInput);
+    if (!videoPayload.ok) {
+      toast.error(videoPayload.error);
       return;
     }
 
@@ -1492,8 +1435,8 @@ export function TeacherDashboard() {
         description: norm(editLessonForm.description),
         order: orderValue,
         homework_description: norm(editLessonForm.homeworkDescription),
-        ...(editLessonForm.videoFile ? { video_file: editLessonForm.videoFile } : {}),
         ...(editLessonForm.homeworkFile ? { homework_file: editLessonForm.homeworkFile } : {}),
+        ...videoPayload.payload, // ✅ youtube_video_id или video_url
       };
 
       const res = await updateLesson(editLessonId, payload);
@@ -1514,17 +1457,17 @@ export function TeacherDashboard() {
       console.error(e);
       toast.error("Ошибка обновления урока");
     }
-  }
+  }, [editLessonId, updateLesson, editLessonForm, closeEditLessonModal, loadTeacherLessons, youtubeRefreshLessonStatus]);
 
-  function askDeleteLesson(lessonId, lessonTitle) {
+  const askDeleteLesson = useCallback((lessonId, lessonTitle) => {
     setConfirmDeleteLesson({
       open: true,
       lessonId: String(lessonId || ""),
       lessonTitle: String(lessonTitle || "Урок"),
     });
-  }
+  }, []);
 
-  async function confirmDeleteLessonNow() {
+  const confirmDeleteLessonNow = useCallback(async () => {
     const { lessonId } = confirmDeleteLesson;
     if (!lessonId) return;
 
@@ -1547,9 +1490,9 @@ export function TeacherDashboard() {
       console.error(e);
       toast.error("Ошибка удаления урока");
     }
-  }
+  }, [confirmDeleteLesson, deleteLesson, closeEditLessonModal, loadTeacherLessons]);
 
-  async function handleAddLesson() {
+  const handleAddLesson = useCallback(async () => {
     if (isAddingLesson) return;
 
     const cid = norm(addForm.courseId);
@@ -1562,20 +1505,26 @@ export function TeacherDashboard() {
       return;
     }
 
-    if (!addForm.videoFile) {
-      toast.error("Выберите видео файл");
-      return;
-    }
-
     const title = norm(addForm.title);
     if (!title) {
       toast.error("Введите название урока");
       return;
     }
 
+    const videoInput = norm(addForm.videoLink);
+    if (!videoInput) {
+      toast.error("Вставьте ссылку на YouTube (или прямую ссылку на видео)");
+      return;
+    }
+
+    const videoPayload = buildLessonVideoPayload(videoInput);
+    if (!videoPayload.ok) {
+      toast.error(videoPayload.error);
+      return;
+    }
+
     const orderNum = Number(addForm.order);
-    const orderValue =
-      String(addForm.order).trim() === "" || !Number.isFinite(orderNum) ? undefined : orderNum;
+    const orderValue = String(addForm.order).trim() === "" || !Number.isFinite(orderNum) ? undefined : orderNum;
 
     setIsAddingLesson(true);
     try {
@@ -1584,9 +1533,9 @@ export function TeacherDashboard() {
         title,
         description: norm(addForm.description),
         order: orderValue,
-        video_file: addForm.videoFile,
         homework_description: norm(addForm.homeworkDescription),
         ...(addForm.homeworkFile ? { homework_file: addForm.homeworkFile } : {}),
+        ...videoPayload.payload, // ✅ youtube_video_id или video_url
       };
 
       const res = await addLesson(payload, { timeout: 0 });
@@ -1602,8 +1551,7 @@ export function TeacherDashboard() {
         title: "",
         description: "",
         order: "",
-        videoFile: null,
-        videoPreviewUrl: "",
+        videoLink: "",
         homeworkDescription: "",
         homeworkFile: null,
       });
@@ -1625,30 +1573,22 @@ export function TeacherDashboard() {
     } finally {
       setIsAddingLesson(false);
     }
-  }
+  }, [isAddingLesson, addForm, addLesson, loadTeacherLessons, normalizedLessons, youtubeRefreshStatusBatch]);
 
   const categoriesOptions = useMemo(() => {
     const base = Array.isArray(categories) ? categories : [];
     return base
-      .map((c) => ({
-        value: String(c?.id ?? c?.pk ?? ""),
-        label: String(c?.name ?? c?.title ?? ""),
-      }))
+      .map((c) => ({ value: String(c?.id ?? c?.pk ?? ""), label: String(c?.name ?? c?.title ?? "") }))
       .filter((x) => x.value && x.label);
   }, [categories]);
 
   const teacherCoursesOptions = useMemo(() => {
     return teacherCourses
-      .map((c) => ({
-        value: normalizeCourseId(c),
-        label: normalizeCourseTitle(c),
-      }))
+      .map((c) => ({ value: normalizeCourseId(c), label: normalizeCourseTitle(c) }))
       .filter((x) => x.value && x.label);
   }, [teacherCourses]);
 
-  const isAnyLoading =
-    !!loading?.public || !!loading?.teacherLessons || !!loading?.teacherHomeworks || false;
-
+  const isAnyLoading = !!loading?.public || !!loading?.teacherLessons || !!loading?.teacherHomeworks || false;
   const anyError = error?.public || error?.teacherLessons || error?.teacherHomeworks || "";
 
   const lessonsByCourse = useCallback(
@@ -1676,6 +1616,18 @@ export function TeacherDashboard() {
       <div className="container mx-auto px-4 py-8">
         <div className="flex items-start justify-between gap-4 mb-8">
           <h1 className="text-3xl">Кабинет преподавателя</h1>
+
+          {/* (опционально) кнопки YouTube (если у тебя вообще остались эндпоинты) */}
+          {/* <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" onClick={fetchYouTubeProjectStatus} disabled={!youtubeProjectStatus}>
+              <RefreshCw className="w-4 h-4 mr-2" />
+              YouTube статус
+            </Button>
+            <Button type="button" variant="outline" onClick={startYouTubeOAuth} disabled={!youtubeProjectOauthStart}>
+              <LinkIcon className="w-4 h-4 mr-2" />
+              YouTube OAuth
+            </Button>
+          </div> */}
         </div>
 
         {ytProject.data ? (
@@ -1798,7 +1750,6 @@ export function TeacherDashboard() {
                         type="button"
                       >
                         <div className="text-left">
-                          {/* ✅ УБРАЛИ ID В СКОБКАХ: было "radia (12)", стало просто "radia" */}
                           <div className="font-semibold">{list?.[0]?.studentUsername || "Студент"}</div>
                           <div className="text-sm text-gray-600">
                             Всего (последние попытки): {list.length} • На проверке: {submitted}
@@ -1810,9 +1761,7 @@ export function TeacherDashboard() {
                       {isOpen && (
                         <div className="mt-5 space-y-4">
                           {list.map((hw) => {
-                            const lesson = normalizedLessons.find(
-                              (l) => normalizeLessonId(l) === String(hw.lessonId)
-                            );
+                            const lesson = normalizedLessons.find((l) => normalizeLessonId(l) === String(hw.lessonId));
                             const comment = comments[hw.id] || "";
                             const canReview = isTeacherCanReview(hw.status);
 
@@ -1822,13 +1771,10 @@ export function TeacherDashboard() {
                                   <div>
                                     <div className="font-semibold">
                                       {hw.courseTitle || "Курс"} •{" "}
-                                      {normalizeLessonTitle(lesson) ||
-                                        hw.lessonTitle ||
-                                        `Урок ${hw.lessonId}`}
+                                      {normalizeLessonTitle(lesson) || hw.lessonTitle || `Урок ${hw.lessonId}`}
                                     </div>
                                     <div className="text-xs text-gray-500 mt-1">
-                                      Отправлено:{" "}
-                                      {hw.createdAt ? new Date(hw.createdAt).toLocaleDateString() : "—"}
+                                      Отправлено: {hw.createdAt ? new Date(hw.createdAt).toLocaleDateString() : "—"}
                                     </div>
                                   </div>
                                   <StatusBadge status={hw.status} />
@@ -1844,9 +1790,7 @@ export function TeacherDashboard() {
 
                                 {hw.teacherComment ? (
                                   <div className="mt-4 p-3 bg-blue-50 rounded">
-                                    <div className="text-sm font-medium mb-1">
-                                      Комментарий преподавателя:
-                                    </div>
+                                    <div className="text-sm font-medium mb-1">Комментарий преподавателя:</div>
                                     <div className="text-sm whitespace-pre-wrap">{hw.teacherComment}</div>
                                   </div>
                                 ) : null}
@@ -1860,26 +1804,17 @@ export function TeacherDashboard() {
                                       onChange={(e) => setCommentFor(hw.id, e.target.value)}
                                     />
                                     <div className="flex flex-wrap gap-3">
-                                      <Button
-                                        onClick={() => handleReview(hw.id, "accepted")}
-                                        className="bg-green-600 hover:bg-green-700"
-                                      >
+                                      <Button onClick={() => handleReview(hw.id, "accepted")} className="bg-green-600 hover:bg-green-700">
                                         <CheckCircle className="w-4 h-4 mr-2" />
                                         Принять
                                       </Button>
 
-                                      <Button
-                                        onClick={() => handleReview(hw.id, "rework")}
-                                        className="bg-orange-600 hover:bg-orange-700"
-                                      >
+                                      <Button onClick={() => handleReview(hw.id, "rework")} className="bg-orange-600 hover:bg-orange-700">
                                         <XCircle className="w-4 h-4 mr-2" />
                                         На доработку
                                       </Button>
 
-                                      <Button
-                                        onClick={() => handleReview(hw.id, "declined")}
-                                        variant="destructive"
-                                      >
+                                      <Button onClick={() => handleReview(hw.id, "declined")} variant="destructive">
                                         <XCircle className="w-4 h-4 mr-2" />
                                         Отклонить
                                       </Button>
@@ -1937,19 +1872,10 @@ export function TeacherDashboard() {
                   <Card key={courseId}>
                     <CardHeader className="py-6">
                       <div className="flex items-start justify-between gap-4">
-                        <button
-                          onClick={() => setExpandedCourse(isOpen ? null : courseId)}
-                          className="flex-1 text-left"
-                          type="button"
-                        >
-                          <CardTitle className="text-xl">
-                            {normalizeCourseTitle(course) || "Курс"}
-                          </CardTitle>
+                        <button onClick={() => setExpandedCourse(isOpen ? null : courseId)} className="flex-1 text-left" type="button">
+                          <CardTitle className="text-xl">{normalizeCourseTitle(course) || "Курс"}</CardTitle>
                           <p className="text-sm text-gray-600 mt-2">
-                            {(normalizeCategoryName(course) || "Без категории") +
-                              " • " +
-                              courseLessons.length +
-                              " уроков"}
+                            {(normalizeCategoryName(course) || "Без категории") + " • " + courseLessons.length + " уроков"}
                           </p>
                           {course?.description ? (
                             <p className="text-sm text-gray-700 mt-2 line-clamp-2">{course.description}</p>
@@ -1957,22 +1883,12 @@ export function TeacherDashboard() {
                         </button>
 
                         <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openEditCourse(course)}
-                          >
+                          <Button type="button" variant="outline" size="sm" onClick={() => openEditCourse(course)}>
                             <FolderPen className="w-4 h-4 mr-2" />
                             Курс
                           </Button>
 
-                          <Button
-                            type="button"
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => askDeleteCourse(course)}
-                          >
+                          <Button type="button" variant="destructive" size="sm" onClick={() => askDeleteCourse(course)}>
                             <Trash2 className="w-4 h-4 mr-2" />
                             Удалить
                           </Button>
@@ -1994,7 +1910,9 @@ export function TeacherDashboard() {
                         <div className="grid md:grid-cols-2 gap-4">
                           {courseLessons.map((l, idx) => {
                             const lid = normalizeLessonId(l);
-                            const backendVideo = norm(l?.video_url || l?.youtube_video_id || "");
+                            const backendVideo = getLessonVideoSource(l);
+
+
                             const orderLabel = Number.isFinite(Number(l?.order)) ? l.order : idx + 1;
 
                             return (
@@ -2005,27 +1923,16 @@ export function TeacherDashboard() {
                                       <span>
                                         {orderLabel}. {normalizeLessonTitle(l) || "Урок"}
                                       </span>
-                                      <YouTubeStatusBadge
-                                        status={l?.youtube_status ?? l?.youtubeStatus}
-                                        error={l?.youtube_error ?? l?.youtubeError}
-                                      />
+                                      <YouTubeStatusBadge status={l?.youtube_status ?? l?.youtubeStatus} error={l?.youtube_error ?? l?.youtubeError} />
                                     </div>
 
                                     <div className="flex items-center gap-2">
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => refreshOneLessonStatus(lid)}
-                                      >
+                                      {/* <Button variant="outline" size="sm" onClick={() => refreshOneLessonStatus(lid)}>
                                         <RefreshCw className="w-4 h-4 mr-2" />
                                         Статус
-                                      </Button>
+                                      </Button> */}
 
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => openEditLessonModal(l)}
-                                      >
+                                      <Button variant="outline" size="sm" onClick={() => openEditLessonModal(l)}>
                                         <Pencil className="w-4 h-4 mr-2" />
                                         Редактировать
                                       </Button>
@@ -2037,9 +1944,7 @@ export function TeacherDashboard() {
                                   <VideoPreview source={backendVideo} heightClass="h-[140px]" />
                                 </div>
 
-                                {l?.description ? (
-                                  <p className="text-sm text-gray-700 mt-3">{l.description}</p>
-                                ) : null}
+                                {l?.description ? <p className="text-sm text-gray-700 mt-3">{l.description}</p> : null}
                               </div>
                             );
                           })}
@@ -2075,46 +1980,34 @@ export function TeacherDashboard() {
                         />
                       </div>
 
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={openAddCourse}
-                        className="shrink-0"
-                        disabled={isAddingLesson}
-                      >
+                      <Button type="button" variant="outline" onClick={openAddCourse} className="shrink-0" disabled={isAddingLesson}>
                         <Plus className="w-4 h-4 mr-2" />
                         Новый курс
                       </Button>
                     </div>
                   </div>
 
+                  {/* ✅ ВМЕСТО ФАЙЛА: ссылка */}
                   <div className="space-y-2">
-                    <label className="text-sm">Видео файл</label>
-                    <label className="block">
-                      <input
-                        type="file"
-                        accept="video/*"
-                        className="hidden"
+                    <label className="text-sm">Ссылка на видео (YouTube)</label>
+                    <div className="flex items-center gap-2">
+                      <LinkIcon className="w-4 h-4 text-gray-600" />
+                      <Input
+                        value={addForm.videoLink}
+                        onChange={(e) => setAddForm((p) => ({ ...p, videoLink: e.target.value }))}
+                        placeholder="https://youtu.be/OT-MQBtMVTo"
                         disabled={isAddingLesson}
-                        onChange={(e) => {
-                          const f = e.target.files?.[0] || null;
-                          if (f) onPickAddVideo(f);
-                          e.target.value = "";
-                        }}
                       />
-                      <div className="w-full border rounded-md px-3 py-2 bg-white hover:bg-gray-50 transition flex items-center gap-2 cursor-pointer">
-                        <Video className="w-4 h-4 text-gray-600" />
-                        <span className="text-sm text-gray-700">
-                          {addForm.videoFile ? addForm.videoFile.name : "Выбрать видео"}
-                        </span>
-                      </div>
-                    </label>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      Можно вставить: YouTube ссылку, или просто ID (11 символов). Также можно прямую ссылку на mp4/webm/ogg.
+                    </div>
                   </div>
                 </div>
 
-                {addForm.videoPreviewUrl ? (
+                {addForm.videoLink ? (
                   <div className="max-w-md">
-                    <VideoPreview source={addForm.videoPreviewUrl} heightClass="h-[180px]" />
+                    <VideoPreview source={addForm.videoLink} heightClass="h-[180px]" />
                   </div>
                 ) : null}
 
@@ -2192,13 +2085,8 @@ export function TeacherDashboard() {
                 return (
                   <Card key={studentId}>
                     <CardContent className="p-6">
-                      <button
-                        onClick={() => toggleArchiveStudent(studentId)}
-                        className="w-full flex items-center justify-between"
-                        type="button"
-                      >
+                      <button onClick={() => toggleArchiveStudent(studentId)} className="w-full flex items-center justify-between" type="button">
                         <div className="text-left">
-                          {/* ✅ УБРАЛИ ID */}
                           <div className="font-semibold">{list?.[0]?.studentUsername || "Студент"}</div>
                           <div className="text-sm text-gray-600">В архиве: {list.length}</div>
                         </div>
@@ -2208,9 +2096,7 @@ export function TeacherDashboard() {
                       {isOpen && (
                         <div className="mt-5 space-y-3">
                           {list.map((hw) => {
-                            const lesson = normalizedLessons.find(
-                              (l) => normalizeLessonId(l) === String(hw.lessonId)
-                            );
+                            const lesson = normalizedLessons.find((l) => normalizeLessonId(l) === String(hw.lessonId));
 
                             return (
                               <div key={hw.id} className="border rounded-lg p-4 bg-white">
@@ -2218,13 +2104,10 @@ export function TeacherDashboard() {
                                   <div>
                                     <div className="font-semibold">
                                       {hw.courseTitle || "Курс"} •{" "}
-                                      {normalizeLessonTitle(lesson) ||
-                                        hw.lessonTitle ||
-                                        `Урок ${hw.lessonId}`}
+                                      {normalizeLessonTitle(lesson) || hw.lessonTitle || `Урок ${hw.lessonId}`}
                                     </div>
                                     <div className="text-xs text-gray-500 mt-1">
-                                      Проверено:{" "}
-                                      {hw.reviewedAt ? new Date(hw.reviewedAt).toLocaleDateString() : "—"}
+                                      Проверено: {hw.reviewedAt ? new Date(hw.reviewedAt).toLocaleDateString() : "—"}
                                     </div>
                                   </div>
                                   <StatusBadge status={hw.status} />
@@ -2262,7 +2145,7 @@ export function TeacherDashboard() {
           </TabsContent>
         </Tabs>
 
-        {/* MODAL: добавить курс (+ фото) + ✅ ВАЛИДАЦИЯ */}
+        {/* MODAL: добавить курс (+ фото) */}
         <Modal
           title="Новый курс"
           isOpen={isAddCourseOpen}
@@ -2273,7 +2156,6 @@ export function TeacherDashboard() {
           closeOnOverlay={false}
         >
           <div className="space-y-3">
-            {/* Название */}
             <div className="space-y-1">
               <label className="text-sm">Название курса</label>
               <Input
@@ -2285,12 +2167,9 @@ export function TeacherDashboard() {
                 placeholder="React с нуля"
                 className={newCourseErrors.title ? "border-red-500 focus-visible:ring-red-500" : ""}
               />
-              {newCourseErrors.title ? (
-                <div className="text-xs text-red-600">{newCourseErrors.title}</div>
-              ) : null}
+              {newCourseErrors.title ? <div className="text-xs text-red-600">{newCourseErrors.title}</div> : null}
             </div>
 
-            {/* Описание */}
             <div className="space-y-1">
               <label className="text-sm">Описание (опционально)</label>
               <Textarea
@@ -2298,18 +2177,14 @@ export function TeacherDashboard() {
                 value={newCourseDescription}
                 onChange={(e) => {
                   setNewCourseDescription(e.target.value);
-                  if (newCourseErrors.description)
-                    setNewCourseErrors((p) => ({ ...p, description: "" }));
+                  if (newCourseErrors.description) setNewCourseErrors((p) => ({ ...p, description: "" }));
                 }}
                 placeholder="Коротко о курсе"
                 className={newCourseErrors.description ? "border-red-500 focus-visible:ring-red-500" : ""}
               />
-              {newCourseErrors.description ? (
-                <div className="text-xs text-red-600">{newCourseErrors.description}</div>
-              ) : null}
+              {newCourseErrors.description ? <div className="text-xs text-red-600">{newCourseErrors.description}</div> : null}
             </div>
 
-            {/* Категория (обязательная) */}
             <div className="space-y-1">
               <label className="text-sm">
                 Категория <span className="text-red-600">*</span>
@@ -2328,12 +2203,9 @@ export function TeacherDashboard() {
                 />
               </div>
 
-              {newCourseErrors.category ? (
-                <div className="text-xs text-red-600">{newCourseErrors.category}</div>
-              ) : null}
+              {newCourseErrors.category ? <div className="text-xs text-red-600">{newCourseErrors.category}</div> : null}
             </div>
 
-            {/* Фото */}
             <div className="space-y-1">
               <label className="text-sm">Картинка курса (опционально)</label>
               <label className="block">
@@ -2355,15 +2227,11 @@ export function TeacherDashboard() {
                   ].join(" ")}
                 >
                   <ImageIcon className="w-4 h-4 text-gray-600" />
-                  <span className="text-sm text-gray-700">
-                    {newCoursePhoto ? newCoursePhoto.name : "Выбрать картинку"}
-                  </span>
+                  <span className="text-sm text-gray-700">{newCoursePhoto ? newCoursePhoto.name : "Выбрать картинку"}</span>
                 </div>
               </label>
 
-              {newCourseErrors.photo ? (
-                <div className="text-xs text-red-600">{newCourseErrors.photo}</div>
-              ) : null}
+              {newCourseErrors.photo ? <div className="text-xs text-red-600">{newCourseErrors.photo}</div> : null}
             </div>
 
             <div className="flex gap-3">
@@ -2384,30 +2252,18 @@ export function TeacherDashboard() {
           </div>
         </Modal>
 
-        {/* MODAL: редактировать курс (+ удалить) */}
-        <Modal
-          title="Редактировать курс"
-          isOpen={isEditCourseOpen}
-          onClose={() => setIsEditCourseOpen(false)}
-          closeOnOverlay={false}
-        >
+        {/* MODAL: редактировать курс */}
+        <Modal title="Редактировать курс" isOpen={isEditCourseOpen} onClose={() => setIsEditCourseOpen(false)} closeOnOverlay={false}>
           <div className="space-y-3">
             {editCourseForm.photoUrl ? (
               <div className="rounded-xl overflow-hidden border bg-black">
-                <img
-                  src={toAbsUrl(editCourseForm.photoUrl)}
-                  alt="course"
-                  className="w-full h-[140px] object-cover"
-                />
+                <img src={toAbsUrl(editCourseForm.photoUrl)} alt="course" className="w-full h-[140px] object-cover" />
               </div>
             ) : null}
 
             <div className="space-y-1">
               <label className="text-sm">Название</label>
-              <Input
-                value={editCourseForm.title}
-                onChange={(e) => setEditCourseForm((p) => ({ ...p, title: e.target.value }))}
-              />
+              <Input value={editCourseForm.title} onChange={(e) => setEditCourseForm((p) => ({ ...p, title: e.target.value }))} />
             </div>
 
             <div className="space-y-1">
@@ -2446,9 +2302,7 @@ export function TeacherDashboard() {
                 />
                 <div className="w-full border rounded-md px-3 py-2 bg-white hover:bg-gray-50 transition flex items-center gap-2 cursor-pointer">
                   <ImageIcon className="w-4 h-4 text-gray-600" />
-                  <span className="text-sm text-gray-700">
-                    {editCourseForm.photoFile ? editCourseForm.photoFile.name : "Выбрать картинку"}
-                  </span>
+                  <span className="text-sm text-gray-700">{editCourseForm.photoFile ? editCourseForm.photoFile.name : "Выбрать картинку"}</span>
                 </div>
               </label>
             </div>
@@ -2476,38 +2330,16 @@ export function TeacherDashboard() {
         </Modal>
 
         {/* MODAL: редактировать урок */}
-        <Modal
-          title="Редактировать урок"
-          isOpen={isEditLessonOpen}
-          onClose={closeEditLessonModal}
-          closeOnOverlay={false}
-        >
+        <Modal title="Редактировать урок" isOpen={isEditLessonOpen} onClose={closeEditLessonModal} closeOnOverlay={false}>
           <div className="space-y-4">
-            <VideoPreview
-              source={editLessonForm.videoPreviewUrl || editLessonForm.backendVideo}
-              heightClass="h-[160px]"
-            />
+            <VideoPreview source={editLessonForm.videoLink || editLessonForm.backendVideo} heightClass="h-[160px]" />
 
-            <div className="flex items-center justify-between gap-2">
-              <YouTubeStatusBadge status={editLessonForm.youtube_status} error={editLessonForm.youtube_error} />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => refreshOneLessonStatus(editLessonId)}
-                disabled={!editLessonId}
-              >
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Обновить
-              </Button>
-            </div>
+
 
             <div className="grid md:grid-cols-2 gap-4">
               <div className="space-y-1">
                 <label className="text-sm">Название</label>
-                <Input
-                  value={editLessonForm.title}
-                  onChange={(e) => setEditLessonForm((p) => ({ ...p, title: e.target.value }))}
-                />
+                <Input value={editLessonForm.title} onChange={(e) => setEditLessonForm((p) => ({ ...p, title: e.target.value }))} />
               </div>
 
               <div className="space-y-1">
@@ -2530,26 +2362,20 @@ export function TeacherDashboard() {
               />
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm">Заменить видео (опционально)</label>
-              <label className="block">
-                <input
-                  type="file"
-                  accept="video/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0] || null;
-                    if (f) onPickEditVideo(f);
-                    e.target.value = "";
-                  }}
+            {/* ✅ ВМЕСТО "Выбрать новое видео": ссылка */}
+            <div className="space-y-1">
+              <label className="text-sm">Ссылка на видео (YouTube / прямое видео)</label>
+              <div className="flex items-center gap-2">
+                <LinkIcon className="w-4 h-4 text-gray-600" />
+                <Input
+                  value={editLessonForm.videoLink}
+                  onChange={(e) => setEditLessonForm((p) => ({ ...p, videoLink: e.target.value }))}
+                  placeholder="https://youtu.be/OT-MQBtMVTo"
                 />
-                <div className="w-full border rounded-md px-3 py-2 bg-white hover:bg-gray-50 transition flex items-center gap-2 cursor-pointer">
-                  <Video className="w-4 h-4 text-gray-600" />
-                  <span className="text-sm text-gray-700">
-                    {editLessonForm.videoFile ? editLessonForm.videoFile.name : "Выбрать новое видео"}
-                  </span>
-                </div>
-              </label>
+              </div>
+              <div className="text-xs text-gray-500">
+                Пример: https://youtu.be/OT-MQBtMVTo или ID (11 символов).
+              </div>
             </div>
 
             <div className="space-y-1">
@@ -2557,9 +2383,7 @@ export function TeacherDashboard() {
               <Textarea
                 rows={2}
                 value={editLessonForm.homeworkDescription}
-                onChange={(e) =>
-                  setEditLessonForm((p) => ({ ...p, homeworkDescription: e.target.value }))
-                }
+                onChange={(e) => setEditLessonForm((p) => ({ ...p, homeworkDescription: e.target.value }))}
               />
             </div>
 
@@ -2575,11 +2399,7 @@ export function TeacherDashboard() {
                 Сохранить
               </Button>
 
-              <Button
-                variant="destructive"
-                onClick={() => askDeleteLesson(editLessonId, editLessonForm.title)}
-                className="w-full"
-              >
+              <Button variant="destructive" onClick={() => askDeleteLesson(editLessonId, editLessonForm.title)} className="w-full">
                 <Trash2 className="w-4 h-4 mr-2" />
                 Удалить урок
               </Button>
@@ -2607,18 +2427,14 @@ export function TeacherDashboard() {
           confirmText="Удалить курс"
         />
 
-        {/* Overlay: uploading */}
+        {/* Overlay: adding (теперь без аплоада видео, но пусть остается как "сохранение") */}
         {isAddingLesson ? (
-          <div
-            className="fixed inset-0 z-[60] flex items-center justify-center px-4"
-            role="status"
-            aria-live="polite"
-          >
+          <div className="fixed inset-0 z-[60] flex items-center justify-center px-4" role="status" aria-live="polite">
             <div className="absolute inset-0 bg-black/70" />
             <div className="relative z-10 w-full max-w-md rounded-2xl bg-white shadow-xl border p-6">
               <div className="flex flex-col items-center text-center gap-4">
                 <div className="animate-spin rounded-full h-16 w-16 border-4 border-gray-200 border-t-blue-600" />
-                <div className="text-xl font-semibold">Видео загружается</div>
+                <div className="text-xl font-semibold">Сохраняем урок</div>
                 <div className="text-sm text-gray-600">Пожалуйста, не выходите</div>
               </div>
             </div>
@@ -2627,6 +2443,6 @@ export function TeacherDashboard() {
       </div>
     </div>
   );
-}
+};
 
 export default TeacherDashboard;

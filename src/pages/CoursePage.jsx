@@ -796,7 +796,7 @@ export function CoursePage() {
       const raw = isDirectVideoUrl(rawOriginal) ? toAbsUrl(rawOriginal) : rawOriginal;
 
       if (!raw) {
-        setVideoError("В этом уроке нет видео (youtube_video_id / video_url пустой на сервере).");
+        setVideoError("В этом уроке нет видео.");
         return;
       }
 
@@ -1124,7 +1124,7 @@ export function CoursePage() {
                 <button
                   type="button"
                   onClick={closePreview}
-                  className="p-2 rounded-xl hover:bg-gray-100 transition"
+                  className="p-2 rounded-x bg-red-500 hover:bg-gray-100 transition"
                   aria-label="Закрыть"
                 >
                   <X className="w-5 h-5" />
