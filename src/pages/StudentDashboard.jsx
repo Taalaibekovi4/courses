@@ -69,19 +69,27 @@ function safeJsonParse(s, fallback) {
 }
 
 function getArchivedSet(userId) {
-  const raw = localStorage.getItem(LS_HW_ARCHIVE) || "{}";
-  const obj = safeJsonParse(raw, {});
-  const key = String(userId || "0");
-  const arr = Array.isArray(obj[key]) ? obj[key] : [];
-  return new Set(arr.map(String));
+  try {
+    const raw = localStorage.getItem(LS_HW_ARCHIVE) || "{}";
+    const obj = safeJsonParse(raw, {});
+    const key = String(userId || "0");
+    const arr = Array.isArray(obj[key]) ? obj[key] : [];
+    return new Set(arr.map(String));
+  } catch (_) {
+    return new Set();
+  }
 }
 
 function setArchivedSet(userId, set) {
-  const raw = localStorage.getItem(LS_HW_ARCHIVE) || "{}";
-  const obj = safeJsonParse(raw, {});
-  const key = String(userId || "0");
-  obj[key] = Array.from(set);
-  localStorage.setItem(LS_HW_ARCHIVE, JSON.stringify(obj));
+  try {
+    const raw = localStorage.getItem(LS_HW_ARCHIVE) || "{}";
+    const obj = safeJsonParse(raw, {});
+    const key = String(userId || "0");
+    obj[key] = Array.from(set);
+    localStorage.setItem(LS_HW_ARCHIVE, JSON.stringify(obj));
+  } catch (_) {
+    // игнорируем — UI не должен падать
+  }
 }
 
 function getHwIdsKey(hw) {
@@ -91,9 +99,7 @@ function getHwCourseId(hw) {
   return String(hw?.course_id ?? hw?.courseId ?? hw?.course ?? "");
 }
 function getHwLessonId(hw) {
-  return String(
-    hw?.lesson ?? hw?.lesson_id ?? hw?.lessonId ?? hw?.lesson?.id ?? hw?.lesson?.pk ?? ""
-  );
+  return String(hw?.lesson ?? hw?.lesson_id ?? hw?.lessonId ?? hw?.lesson?.id ?? hw?.lesson?.pk ?? "");
 }
 function getHwTitle(hw) {
   return hw?.lesson_title || (getHwLessonId(hw) ? `Урок #${getHwLessonId(hw)}` : "Урок");
@@ -268,10 +274,13 @@ function getYouTubeId(input) {
 function isDirectVideoUrl(input) {
   const v = String(input || "").trim().toLowerCase();
   if (!v) return false;
+
+  // ⚠️ http(s) само по себе НЕ значит "прямой видеофайл".
+  // иначе YouTube URL считался бы direct и ломал бы логику.
+  if (v.startsWith("blob:")) return true;
+  if (v.startsWith("/media/") || v.includes("/media/")) return true;
+
   return (
-    v.startsWith("http://") ||
-    v.startsWith("https://") ||
-    v.startsWith("blob:") ||
     v.endsWith(".mp4") ||
     v.endsWith(".webm") ||
     v.endsWith(".ogg") ||
@@ -343,10 +352,15 @@ function pickHwVideo(hw) {
     hw?.youtube_video_id ||
     hw?.youtubeId ||
     "";
+
   const s = String(raw || "").trim();
   if (!s) return "";
-  // если это файл и начинается с /media — делаем абсолютным
-  return isDirectVideoUrl(s) ? toAbsUrl(s) : s;
+
+  // /media и относительные ссылки делаем абсолютными
+  if (isDirectVideoUrl(s)) return toAbsUrl(s);
+
+  // youtube url / id отдаём как есть
+  return s;
 }
 
 function getAccessToken() {
@@ -478,6 +492,7 @@ function VideoPreviewModal({ open, title, videoSrc, onClose }) {
     async (videoId) => {
       const ok = await ensureYouTubeScriptWithTimeout(3500);
 
+      // fallback iframe (без API)
       if (!ok) {
         setFallbackIframeId(videoId);
         setIsVideoReady(true);
@@ -499,7 +514,7 @@ function VideoPreviewModal({ open, title, videoSrc, onClose }) {
           videoId,
           width: "100%",
           height: "100%",
-          host: "https://www.youtube-nocookie.com",
+          // ✅ FIX: убрали host nocookie — именно он часто даёт 153 в YT.Player
           playerVars: {
             autoplay: 1,
             controls: 0,
@@ -644,10 +659,11 @@ function VideoPreviewModal({ open, title, videoSrc, onClose }) {
                     key={iframeKey}
                     title="lesson-video"
                     className="absolute inset-0 w-full h-full"
-                    src={`https://www.youtube-nocookie.com/embed/${fallbackIframeId}?autoplay=1&mute=${
+                    src={`https://www.youtube.com/embed/${fallbackIframeId}?autoplay=1&mute=${
                       isMuted ? 1 : 0
                     }&rel=0&modestbranding=1&playsinline=1`}
                     allow="autoplay; encrypted-media; picture-in-picture"
+                    referrerPolicy="strict-origin-when-cross-origin"
                     allowFullScreen
                   />
                 ) : (
@@ -672,7 +688,7 @@ function VideoPreviewModal({ open, title, videoSrc, onClose }) {
                 />
               ) : null}
 
-              {/* SHIELD (как у тебя) */}
+              {/* SHIELD */}
               {!videoError && (
                 <div
                   className="absolute inset-0 z-20"
@@ -818,23 +834,28 @@ export function StudentDashboard() {
 
   useEffect(() => {
     if (!user?.id) return;
+
     const ids = myCoursesRaw.map(getCourseId).filter(Boolean);
     if (!ids.length) return;
 
     let alive = true;
 
     (async () => {
+      // ✅ FIX: параллельно и безопасно, чтобы не тормозило на 10+ курсах
+      const settled = await Promise.allSettled(
+        ids.map((cid) => authApi.get(`/courses/${encodeURIComponent(String(cid))}/`).then((r) => [String(cid), r.data]))
+      );
+
+      if (!alive) return;
+
       const next = {};
-      for (const cid of ids) {
-        try {
-          const r = await authApi.get(`/courses/${encodeURIComponent(String(cid))}/`);
-          if (!alive) return;
-          next[String(cid)] = r.data || null;
-        } catch (_) {
-          // не ломаем UI — просто пропускаем
+      for (const s of settled) {
+        if (s.status === "fulfilled") {
+          const [cid, data] = s.value || [];
+          if (cid) next[String(cid)] = data || null;
         }
       }
-      if (!alive) return;
+
       setCourseExtra((prev) => ({ ...prev, ...next }));
     })();
 
@@ -848,7 +869,6 @@ export function StudentDashboard() {
     return myCoursesRaw.map((c) => {
       const cid = getCourseId(c);
       const extra = cid ? courseExtra[String(cid)] : null;
-      // extra может содержать teacher_name / teacher / instructor_name и т.д.
       return extra ? { ...c, ...extra, _extra: extra } : c;
     });
   }, [myCoursesRaw, courseExtra]);
@@ -970,9 +990,8 @@ export function StudentDashboard() {
                 const title = course?.title || course?.name || course?.access?.course_title || "Курс";
                 const categoryName = getCategoryName(course);
 
-                // ✅ подтянули препода (если сервер отдаёт в /courses/{id}/)
                 const teacher = getTeacherName(course) || "—";
-                const teacherLine = teacher ? `Преподаватель: ${teacher}` : "Преподаватель: —";
+                const teacherLine = `Преподаватель: ${teacher}`;
 
                 const { totalLessons, acceptedCount, pct } = courseProgress(course);
 
@@ -1007,8 +1026,7 @@ export function StudentDashboard() {
 
                         {course?.access?.remaining_videos != null ? (
                           <div className="text-sm text-gray-600">
-                            Осталось открытий видео:{" "}
-                            <span className="font-medium">{course.access.remaining_videos}</span>
+                            Осталось открытий видео: <span className="font-medium">{course.access.remaining_videos}</span>
                           </div>
                         ) : null}
                       </div>
@@ -1048,7 +1066,7 @@ export function StudentDashboard() {
                 const comment = getHwTeacherComment(hw);
                 const lessonTitle = getHwTitle(hw);
 
-                const hwVideo = pickHwVideo(hw); // может быть пустым — тогда кнопку не показываем
+                const hwVideo = pickHwVideo(hw);
 
                 return (
                   <Card key={id}>
@@ -1078,7 +1096,6 @@ export function StudentDashboard() {
                           <Button variant="outline">Открыть</Button>
                         </Link>
 
-                        {/* ✅ видео-превью (как CoursePage) */}
                         {hwVideo ? (
                           <Button
                             variant="outline"
@@ -1125,6 +1142,7 @@ export function StudentDashboard() {
                 placeholder="Введите токен (например: ABCDEF123)"
                 value={tokenInput}
                 onChange={(e) => setTokenInput(e.target.value)}
+                disabled={!!data.loading?.activateToken}
               />
               <Button onClick={handleActivateToken} className="sm:w-auto w-full" disabled={!!data.loading?.activateToken}>
                 <Key className="w-4 h-4 mr-2" />

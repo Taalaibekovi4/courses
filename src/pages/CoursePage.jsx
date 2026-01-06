@@ -193,6 +193,28 @@ function getYouTubeId(input) {
   return "";
 }
 
+/** ✅ NEW: вытащить si из ссылки, чтобы не ловить 153 на embed */
+function extractYouTubeSi(input) {
+  const s = String(input || "").trim();
+  if (!s) return "";
+  const m = s.match(/[?&]si=([^&]+)/i);
+  return m?.[1] ? String(m[1]) : "";
+}
+
+/** ✅ NEW: собрать embed как в твоём iframe */
+function buildYouTubeEmbedUrl({ videoId, rawUrl, muted }) {
+  const si = extractYouTubeSi(rawUrl);
+  const base = `https://www.youtube.com/embed/${videoId}`;
+  const params = new URLSearchParams();
+  params.set("autoplay", "1");
+  params.set("mute", muted ? "1" : "0");
+  params.set("rel", "0");
+  params.set("modestbranding", "1");
+  params.set("playsinline", "1");
+  if (si) params.set("si", si);
+  return `${base}?${params.toString()}`;
+}
+
 function isDirectVideoUrl(input) {
   const v = String(input || "").trim().toLowerCase();
   if (!v) return false;
@@ -692,7 +714,8 @@ export function CoursePage() {
           videoId,
           width: "100%",
           height: "100%",
-          host: "https://www.youtube-nocookie.com",
+          // ✅ FIX: обычный домен чаще стабильнее, чем nocookie (и меньше 153)
+          host: "https://www.youtube.com",
           playerVars: {
             autoplay: 1,
             controls: 0,
@@ -702,6 +725,7 @@ export function CoursePage() {
             rel: 0,
             playsinline: 1,
             iv_load_policy: 3,
+            enablejsapi: 1,
             origin: window.location.origin,
           },
           events: {
@@ -725,7 +749,7 @@ export function CoursePage() {
               }
             },
             onError: () => {
-              setVideoError("Видео не воспроизводится. Проверь youtube_video_id на бэке.");
+              setVideoError("Видео не воспроизводится. Если доступ «по ссылке», проверь запрет на встраивание (embed).");
               setIsVideoReady(false);
               setIsVideoEnded(false);
               stopYouTubeTimer();
@@ -823,14 +847,7 @@ export function CoursePage() {
     return () => {
       alive = false;
     };
-  }, [
-    isPreviewOpen,
-    activeLesson,
-    initYouTubePlayer,
-    destroyYouTubePlayer,
-    destroyHtmlVideo,
-    startHtmlVideoTimer,
-  ]);
+  }, [isPreviewOpen, activeLesson, initYouTubePlayer, destroyYouTubePlayer, destroyHtmlVideo, startHtmlVideoTimer]);
 
   const scrollToTariffs = useCallback(() => {
     const el = tariffsRef.current;
@@ -902,9 +919,7 @@ export function CoursePage() {
               {getCourseTitle(course)}
             </h1>
 
-            <p className="mt-4 text-white/80 text-base sm:text-lg max-w-3xl">
-              {getCourseDesc(course)}
-            </p>
+            <p className="mt-4 text-white/80 text-base sm:text-lg max-w-3xl">{getCourseDesc(course)}</p>
           </div>
         </div>
 
@@ -1077,12 +1092,7 @@ export function CoursePage() {
                           </div>
 
                           <div className="mt-4">
-                            <a
-                              href={generateWhatsAppTariffLink(t)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="block"
-                            >
+                            <a href={generateWhatsAppTariffLink(t)} target="_blank" rel="noopener noreferrer" className="block">
                               <Button className="w-full gap-2 h-11 rounded-xl bg-[#FFD70A] text-black hover:bg-[#ffde33] font-bold">
                                 <ShoppingCart className="w-4 h-4" />
                                 Купить тариф
@@ -1124,10 +1134,10 @@ export function CoursePage() {
                 <button
                   type="button"
                   onClick={closePreview}
-                  className="p-2 rounded-x bg-red-500 hover:bg-gray-100 transition"
+                  className="p-2 rounded-xl bg-red-500 hover:bg-red-600 transition"
                   aria-label="Закрыть"
                 >
-                  <X className="w-5 h-5" />
+                  <X className="w-5 h-5 text-white" />
                 </button>
               </div>
 
@@ -1142,15 +1152,21 @@ export function CoursePage() {
 
                     if (ytId) {
                       if (fallbackIframeId) {
+                        const src = buildYouTubeEmbedUrl({
+                          videoId: fallbackIframeId,
+                          rawUrl: rawOriginal,
+                          muted: isMuted,
+                        });
+
                         return (
                           <iframe
                             key={iframeKey}
-                            title="lesson-video"
+                            title="YouTube video player"
                             className="absolute inset-0 w-full h-full"
-                            src={`https://www.youtube-nocookie.com/embed/${fallbackIframeId}?autoplay=1&mute=${
-                              isMuted ? 1 : 0
-                            }&rel=0&modestbranding=1&playsinline=1`}
-                            allow="autoplay; encrypted-media; picture-in-picture"
+                            src={src}
+                            frameBorder="0"
+                            referrerPolicy="strict-origin-when-cross-origin"
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                             allowFullScreen
                           />
                         );
@@ -1262,8 +1278,8 @@ export function CoursePage() {
                   </div>
                 </div>
 
-                <div className=" text-gray-900 mt-5 grid grid-cols-2 gap-3">
-                  <Button  variant="outline" onClick={closePreview}>
+                <div className="text-gray-900 mt-5 grid grid-cols-2 gap-3">
+                  <Button variant="outline" onClick={closePreview}>
                     Закрыть
                   </Button>
                   <Button

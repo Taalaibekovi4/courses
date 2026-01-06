@@ -180,6 +180,16 @@ const unlockBodyScroll = () => {
    - youtube url/id -> <iframe>
    - mp4/webm/ogg/blob or /media/... -> <video>
    ========================= */
+
+
+const extractYouTubeSi = (input) => {
+  const s = norm(input);
+  if (!s) return "";
+  const m = s.match(/[?&]si=([^&]+)/i);
+  return m?.[1] ? String(m[1]) : "";
+};
+
+
 const extractYouTubeId = (input) => {
   const s = norm(input);
   if (!s) return "";
@@ -236,19 +246,24 @@ const VideoPreview = ({ source, className = "", heightClass = "h-[160px]" }) => 
   const src = toAbsUrl(raw);
 
   if (ytId) {
-    const embed = `https://www.youtube-nocookie.com/embed/${ytId}?rel=0&modestbranding=1&playsinline=1`;
+    const si = extractYouTubeSi(raw);
+    const embed = `https://www.youtube.com/embed/${ytId}?rel=0&modestbranding=1&playsinline=1${si ? `&si=${encodeURIComponent(si)}` : ""}`;
+
     return (
       <div className={`rounded-lg overflow-hidden bg-black border ${heightClass} ${className}`}>
         <iframe
-          title="YouTube preview"
+          title="YouTube video player"
           src={embed}
           className={`w-full ${heightClass}`}
-          allow="autoplay; encrypted-media; picture-in-picture"
+          frameBorder="0"
+          referrerPolicy="strict-origin-when-cross-origin"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
           allowFullScreen
         />
       </div>
     );
   }
+
 
   if (isDirectVideoUrl(src) || src.startsWith("http://") || src.startsWith("https://") || src.startsWith("blob:")) {
     return (

@@ -54,6 +54,17 @@ function isDirectVideoUrl(input) {
   if (!v) return false;
   if (v.startsWith("blob:")) return true;
   if (v.startsWith("/media/") || v.includes("/media/")) return true;
+  if (v.startsWith("http://") || v.startsWith("https://")) {
+    // если это прямая ссылка на файл
+    return (
+      v.endsWith(".mp4") ||
+      v.endsWith(".webm") ||
+      v.endsWith(".ogg") ||
+      v.includes(".mp4?") ||
+      v.includes(".webm?") ||
+      v.includes(".ogg?")
+    );
+  }
   return (
     v.endsWith(".mp4") ||
     v.endsWith(".webm") ||
@@ -89,6 +100,9 @@ function getYouTubeId(raw) {
 
       const sidx = parts.findIndex((p) => p === "shorts");
       if (sidx >= 0 && /^[a-zA-Z0-9_-]{11}$/.test(parts[sidx + 1] || "")) return parts[sidx + 1];
+
+      const lidx = parts.findIndex((p) => p === "live");
+      if (lidx >= 0 && /^[a-zA-Z0-9_-]{11}$/.test(parts[lidx + 1] || "")) return parts[lidx + 1];
     }
   } catch (_) {}
 
@@ -101,7 +115,40 @@ function getYouTubeId(raw) {
   const emb = v.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/);
   if (emb?.[1]) return emb[1];
 
+  const shorts = v.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/);
+  if (shorts?.[1]) return shorts[1];
+
+  const live = v.match(/youtube\.com\/live\/([a-zA-Z0-9_-]{11})/);
+  if (live?.[1]) return live[1];
+
   return "";
+}
+
+/** ✅ si параметр из YouTube ссылки (часто встречается в embed) */
+function extractYouTubeSi(raw) {
+  const v = norm(raw);
+  if (!v) return "";
+  try {
+    const u = new URL(v);
+    const si = u.searchParams.get("si");
+    return si ? String(si) : "";
+  } catch (_) {}
+  const m = v.match(/[?&]si=([^&]+)/i);
+  return m?.[1] ? String(m[1]) : "";
+}
+
+/** ✅ стабильный embed: youtube.com + referrerPolicy + si */
+function buildYouTubeEmbedUrl({ videoId, rawUrl }) {
+  const si = extractYouTubeSi(rawUrl);
+  const base = `https://www.youtube.com/embed/${encodeURIComponent(videoId)}`;
+  const params = new URLSearchParams();
+  params.set("autoplay", "0");
+  params.set("rel", "0");
+  params.set("modestbranding", "1");
+  params.set("iv_load_policy", "3");
+  params.set("playsinline", "1");
+  if (si) params.set("si", si);
+  return `${base}?${params.toString()}`;
 }
 
 function statusBadge(status) {
@@ -437,10 +484,9 @@ export function StudentCoursePage() {
 
     const raw = pickRawVideoFromOpened();
     const rawAbs = toAbsUrl(raw);
+
     const ytId = getYouTubeId(rawAbs) || getYouTubeId(raw);
-
     const directPlayable = isDirectVideoUrl(rawAbs) ? rawAbs : "";
-
     const hasPlayable = Boolean(ytId || directPlayable);
 
     if (!hasPlayable) {
@@ -508,17 +554,18 @@ export function StudentCoursePage() {
     }
 
     if (ytId) {
-      const src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(
-        ytId
-      )}?autoplay=0&rel=0&modestbranding=1&iv_load_policy=3&playsinline=1`;
+      // ✅ FIX: youtube.com + si + referrerPolicy (часто убирает 153)
+      const src = buildYouTubeEmbedUrl({ videoId: ytId, rawUrl: rawAbs || raw });
 
       return (
         <iframe
           key={`yt_${lessonKey}_${ytId}`}
-          title="video"
+          title="YouTube video player"
           src={src}
           className="w-full h-full"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          frameBorder="0"
+          referrerPolicy="strict-origin-when-cross-origin"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
           allowFullScreen
         />
       );
@@ -564,8 +611,7 @@ export function StudentCoursePage() {
 
     const lid = getLessonId(currentLesson);
 
-    const homeworkIdToSend =
-      submitMode === "update_current" ? lastHw?.id : null;
+    const homeworkIdToSend = submitMode === "update_current" ? lastHw?.id : null;
 
     const res = await data.submitHomework?.({
       lessonId: lid,
