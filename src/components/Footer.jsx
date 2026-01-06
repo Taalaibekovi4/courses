@@ -5,7 +5,7 @@ import { MessageCircle, Instagram } from "lucide-react";
 
 import { useData } from "../contexts/DataContext.jsx";
 
-const WHATSAPP_NUMBER = "996221000953";
+const WHATSAPP_NUMBER = "996706688449";
 const INSTAGRAM_URL =
   "https://www.instagram.com/vostok_osh?igsh=MW5ma3p4eGtqOTB3Mg==";
 

@@ -1818,22 +1818,23 @@ const openEditLessonModal = useCallback((lesson) => {
                                       value={comment}
                                       onChange={(e) => setCommentFor(hw.id, e.target.value)}
                                     />
-                                    <div className="flex flex-wrap gap-3">
-                                      <Button onClick={() => handleReview(hw.id, "accepted")} className="bg-green-600 hover:bg-green-700">
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                      <Button onClick={() => handleReview(hw.id, "accepted")} className="bg-green-600 hover:bg-green-700 w-full">
                                         <CheckCircle className="w-4 h-4 mr-2" />
                                         Принять
                                       </Button>
 
-                                      <Button onClick={() => handleReview(hw.id, "rework")} className="bg-orange-600 hover:bg-orange-700">
+                                      <Button onClick={() => handleReview(hw.id, "rework")} className="bg-orange-600 hover:bg-orange-700 w-full">
                                         <XCircle className="w-4 h-4 mr-2" />
                                         На доработку
                                       </Button>
 
-                                      <Button onClick={() => handleReview(hw.id, "declined")} variant="destructive">
+                                      <Button onClick={() => handleReview(hw.id, "declined")} variant="destructive" className="w-full">
                                         <XCircle className="w-4 h-4 mr-2" />
                                         Отклонить
                                       </Button>
                                     </div>
+
                                   </div>
                                 ) : null}
 
@@ -1859,17 +1860,18 @@ const openEditLessonModal = useCallback((lesson) => {
 
           {/* Мои курсы */}
           <TabsContent value="courses" className="space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <Button type="button" variant="outline" onClick={refreshAllLessonStatuses}>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <Button type="button" variant="outline" onClick={refreshAllLessonStatuses} className="w-full sm:w-auto">
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Обновить статусы
               </Button>
 
-              <Button type="button" variant="outline" onClick={openAddCourse}>
+              <Button type="button" variant="outline" onClick={openAddCourse} className="w-full sm:w-auto">
                 <Plus className="w-4 h-4 mr-2" />
                 Новый курс
               </Button>
             </div>
+
 
             {teacherCourses.length === 0 ? (
               <Card>
@@ -1886,31 +1888,33 @@ const openEditLessonModal = useCallback((lesson) => {
                 return (
                   <Card key={courseId}>
                     <CardHeader className="py-6">
-                      <div className="flex items-start justify-between gap-4">
-                        <button onClick={() => setExpandedCourse(isOpen ? null : courseId)} className="flex-1 text-left" type="button">
+                      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                        <button
+                          onClick={() => setExpandedCourse(isOpen ? null : courseId)}
+                          className="flex-1 text-left"
+                          type="button"
+                        >
                           <CardTitle className="text-xl">{normalizeCourseTitle(course) || "Курс"}</CardTitle>
                           <p className="text-sm text-gray-600 mt-2">
                             {(normalizeCategoryName(course) || "Без категории") + " • " + courseLessons.length + " уроков"}
                           </p>
-                          {course?.description ? (
-                            <p className="text-sm text-gray-700 mt-2 line-clamp-2">{course.description}</p>
-                          ) : null}
+                          {course?.description ? <p className="text-sm text-gray-700 mt-2 line-clamp-2">{course.description}</p> : null}
                         </button>
 
-                        <div className="flex items-center gap-2">
-                          <Button type="button" variant="outline" size="sm" onClick={() => openEditCourse(course)}>
+                        <div className="flex flex-wrap md:flex-nowrap items-center gap-2 md:justify-end w-full md:w-auto">
+                          <Button type="button" variant="outline" size="sm" onClick={() => openEditCourse(course)} className="w-full sm:w-auto">
                             <FolderPen className="w-4 h-4 mr-2" />
                             Курс
                           </Button>
 
-                          <Button type="button" variant="destructive" size="sm" onClick={() => askDeleteCourse(course)}>
+                          <Button type="button" variant="destructive" size="sm" onClick={() => askDeleteCourse(course)} className="w-full sm:w-auto">
                             <Trash2 className="w-4 h-4 mr-2" />
                             Удалить
                           </Button>
 
                           <button
                             onClick={() => setExpandedCourse(isOpen ? null : courseId)}
-                            className="p-2 rounded-xl hover:bg-gray-100 transition"
+                            className="p-2 rounded-xl hover:bg-gray-100 transition w-full sm:w-auto flex items-center justify-center"
                             type="button"
                             aria-label="Открыть/закрыть"
                           >
@@ -1918,6 +1922,7 @@ const openEditLessonModal = useCallback((lesson) => {
                           </button>
                         </div>
                       </div>
+
                     </CardHeader>
 
                     {isOpen && (
