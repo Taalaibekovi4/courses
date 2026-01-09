@@ -491,7 +491,7 @@ export function CoursePage() {
     loadTariffs();
   }, [loadTariffs]);
 
-  /** ✅ ГЛАВНОЕ ИСПРАВЛЕНИЕ: уроки всегда берем ТОЛЬКО для этого курса */
+  /** ✅ FIX: на embedded mismatch НЕ “роняем” список в пустоту — пробуем API */
   const loadLessons = useCallback(async () => {
     const cid = String(getCourseId(course) ?? courseId ?? "").trim();
     if (!cid) return;
@@ -502,14 +502,17 @@ export function CoursePage() {
     try {
       const embedded = extractLessonsFromCourse(course);
       if (embedded.length) {
-        const filtered = embedded.filter((l) => String(l.courseId || "") === String(cid));
-        const finalList = filtered.length ? filtered : [];
-        finalList.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
-        setLessons(finalList);
-        if (courseLessonsCount > 0 && finalList.length === 0) {
-          setLessonsError("Уроки есть, но у вложенных уроков не совпадает course_id. Проверь поле course у уроков.");
+        const filteredEmbedded = embedded.filter((l) => String(l.courseId || "") === String(cid));
+        if (filteredEmbedded.length) {
+          filteredEmbedded.sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+          setLessons(filteredEmbedded);
+          return;
         }
-        return;
+        if (courseLessonsCount > 0) {
+          setLessonsError(
+            "Уроки есть, но у вложенных уроков не совпадает course_id. Загружаю уроки отдельным запросом."
+          );
+        }
       }
 
       let res = await tryGet(publicApi, "/lessons/", { params: { course_id: cid } });
@@ -714,7 +717,6 @@ export function CoursePage() {
           videoId,
           width: "100%",
           height: "100%",
-          // ✅ FIX: обычный домен чаще стабильнее, чем nocookie (и меньше 153)
           host: "https://www.youtube.com",
           playerVars: {
             autoplay: 1,
@@ -867,13 +869,13 @@ export function CoursePage() {
   if (!course && !courseLoading) {
     return (
       <div className="min-h-screen bg-[#0b0b0b] text-white">
-        <div className="app-container py-12">
+        <div className="app-container py-12 px-3 sm:px-6">
           <Card className="rounded-2xl border border-white/10 bg-white/5 text-white shadow-[0_12px_40px_rgba(0,0,0,0.35)]">
-            <CardContent className="py-12 text-center">
+            <CardContent className="py-12 text-center px-4">
               <p className="text-white/80">Курс не найден</p>
               <div className="mt-4">
                 <Link to="/courses">
-                  <Button variant="outline" className="border-white/20 text-white hover:bg-white/10">
+                  <Button variant="outline" className="border-white/20 text-white hover:bg-white/10 w-full sm:w-auto">
                     Назад к курсам
                   </Button>
                 </Link>
@@ -897,29 +899,29 @@ export function CoursePage() {
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_30%,rgba(255,214,10,.20),transparent_55%),radial-gradient(circle_at_70%_20%,rgba(255,214,10,.10),transparent_55%)]" />
         </div>
 
-        <div className="relative app-container py-14 sm:py-16">
+        <div className="relative app-container py-12 sm:py-14 lg:py-16 px-3 sm:px-6">
           <div className="max-w-4xl">
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <Badge className="bg-white/15 text-white border-white/20" variant="secondary">
                 {categoryName}
               </Badge>
 
-              <span className="inline-flex items-center gap-2 text-xs sm:text-sm bg-white/10 border border-white/15 rounded-md px-3 py-2 text-white/90">
+              <span className="inline-flex items-center gap-2 text-[11px] sm:text-sm bg-white/10 border border-white/15 rounded-md px-3 py-2 text-white/90">
                 <BookOpen className="w-4 h-4" />
                 {lessonsCountShown} уроков
               </span>
 
-              <span className="inline-flex items-center gap-2 text-xs sm:text-sm bg-white/10 border border-white/15 rounded-md px-3 py-2 text-white/90">
+              <span className="inline-flex items-center gap-2 text-[11px] sm:text-sm bg-white/10 border border-white/15 rounded-md px-3 py-2 text-white/90">
                 <GraduationCap className="w-4 h-4" />
-                {teacherName}
+                <span className="break-words">{teacherName}</span>
               </span>
             </div>
 
-            <h1 className="mt-4 text-[#FFD70A] text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-[0.08em] uppercase">
+            <h1 className="mt-4 text-[#FFD70A] text-2xl sm:text-4xl lg:text-5xl font-extrabold tracking-[0.08em] uppercase break-words">
               {getCourseTitle(course)}
             </h1>
 
-            <p className="mt-4 text-white/80 text-base sm:text-lg max-w-3xl">{getCourseDesc(course)}</p>
+            <p className="mt-4 text-white/80 text-sm sm:text-lg max-w-3xl break-words">{getCourseDesc(course)}</p>
           </div>
         </div>
 
@@ -927,18 +929,18 @@ export function CoursePage() {
       </section>
 
       {/* CONTENT */}
-      <div className="app-container py-10">
-        <div className="grid lg:grid-cols-3 gap-8">
+      <div className="app-container py-8 sm:py-10 px-3 sm:px-6">
+        <div className="grid lg:grid-cols-3 gap-6 lg:gap-8">
           {/* LEFT */}
           <div className="lg:col-span-2 space-y-6">
             <Card className="rounded-2xl border border-white/10 bg-white/5 text-white shadow-[0_12px_40px_rgba(0,0,0,0.35)]">
-              <CardHeader className="flex flex-row items-center justify-between gap-3">
+              <CardHeader className="flex flex-col sm:flex-row sm:items-center items-start justify-between gap-3">
                 <CardTitle className="text-white font-extrabold">Программа курса</CardTitle>
                 <Button
                   variant="outline"
                   onClick={() => loadLessons()}
                   disabled={lessonsLoading}
-                  className="border-white/20 text-white hover:bg-white/10"
+                  className="border-white/20 text-white hover:bg-white/10 w-full sm:w-auto"
                 >
                   Обновить
                 </Button>
@@ -969,7 +971,7 @@ export function CoursePage() {
                     <div className="mt-4">
                       <Button
                         onClick={() => loadLessons()}
-                        className="h-11 px-6 rounded-xl bg-[#FFD70A] text-black hover:bg-[#ffde33] font-bold"
+                        className="h-11 px-6 rounded-xl bg-[#FFD70A] text-black hover:bg-[#ffde33] font-bold w-full sm:w-auto"
                       >
                         Проверить снова
                       </Button>
@@ -977,6 +979,7 @@ export function CoursePage() {
                   </div>
                 )}
 
+                {/* ✅ УРОКИ: стабильная адаптивка до 320px */}
                 {!lessonsLoading && lessons.length > 0 && (
                   <div className="space-y-3">
                     {lessons.map((lesson, index) => (
@@ -994,10 +997,10 @@ export function CoursePage() {
                         </div>
 
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-start justify-between gap-4">
+                          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                             <div className="min-w-0">
-                              <h4 className="font-semibold text-white truncate">{lesson.title}</h4>
-                              <p className="text-sm text-white/70 mt-1 line-clamp-2">{lesson.description}</p>
+                              <h4 className="font-semibold text-white break-words">{lesson.title}</h4>
+                              <p className="text-sm text-white/70 mt-1 line-clamp-2 break-words">{lesson.description}</p>
 
                               {lesson.homeworkDescription ? (
                                 <div className="mt-2 text-xs text-black inline-flex items-center gap-1 bg-[#FFD70A] rounded-full px-3 py-1 font-bold">
@@ -1007,9 +1010,15 @@ export function CoursePage() {
                               ) : null}
                             </div>
 
-                            <span className="shrink-0 inline-flex items-center gap-2 text-sm px-3 py-2 rounded-xl border border-white/15 bg-white/5 group-hover:bg-white/10 transition">
+                            <span
+                              className={[
+                                "shrink-0 inline-flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-xl border border-white/15",
+                                "bg-white/5 group-hover:bg-white/10 transition",
+                                "w-full sm:w-auto",
+                              ].join(" ")}
+                            >
                               <PlayCircle className="w-5 h-5 text-white/85" />
-                              <span className="hidden sm:inline text-white/90">Смотреть</span>
+                              <span className="text-white/90">Смотреть</span>
                             </span>
                           </div>
                         </div>
@@ -1024,7 +1033,7 @@ export function CoursePage() {
           {/* RIGHT */}
           <div className="space-y-6">
             <Card className="rounded-2xl border border-white/10 bg-white/5 text-white shadow-[0_12px_40px_rgba(0,0,0,0.35)] lg:sticky lg:top-24">
-              <CardHeader>
+              <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-3">
                   <CardTitle className="text-white font-extrabold">Тарифы</CardTitle>
                   <Badge className="bg-white/15 text-white border-white/20" variant="secondary">
@@ -1061,17 +1070,15 @@ export function CoursePage() {
                           ].join(" ")}
                         >
                           <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <div className="font-semibold text-white truncate">{title}</div>
-                              </div>
+                            <div className="min-w-0 w-full">
+                              <div className="font-semibold text-white break-words">{title}</div>
 
                               <div className="mt-2 flex items-end gap-2">
-                                <div className="text-2xl font-extrabold text-[#FFD70A]">{price}</div>
+                                <div className="text-xl sm:text-2xl font-extrabold text-[#FFD70A] break-words">{price}</div>
                               </div>
 
                               {t.description ? (
-                                <div className="mt-2 text-sm text-white/70 line-clamp-3">{t.description}</div>
+                                <div className="mt-2 text-sm text-white/70 line-clamp-3 break-words">{t.description}</div>
                               ) : null}
 
                               <div className="mt-3 grid gap-2 text-sm text-white/80">
@@ -1092,7 +1099,12 @@ export function CoursePage() {
                           </div>
 
                           <div className="mt-4">
-                            <a href={generateWhatsAppTariffLink(t)} target="_blank" rel="noopener noreferrer" className="block">
+                            <a
+                              href={generateWhatsAppTariffLink(t)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block"
+                            >
                               <Button className="w-full gap-2 h-11 rounded-xl bg-[#FFD70A] text-black hover:bg-[#ffde33] font-bold">
                                 <ShoppingCart className="w-4 h-4" />
                                 Купить тариф
@@ -1125,12 +1137,12 @@ export function CoursePage() {
       {isPreviewOpen && (
         <>
           {/* 1) MODAL: VIDEO PREVIEW */}
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4" role="dialog" aria-modal="true">
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-3 sm:px-4 py-6" role="dialog" aria-modal="true">
             <div className="absolute inset-0 bg-black/70" />
 
-            <div className="relative z-10 w-full max-w-3xl bg-white rounded-2xl overflow-hidden shadow-xl border border-white/10">
-              <div className="flex items-center justify-between px-4 py-3 border-b">
-                <div className="font-semibold truncate pr-3">{activeLesson?.title || "Просмотр урока"}</div>
+            <div className="relative z-10 w-full max-w-3xl bg-white rounded-xl sm:rounded-2xl overflow-hidden shadow-xl border border-white/10 max-h-[92vh] flex flex-col">
+              <div className="flex items-center justify-between px-3 sm:px-4 py-3 border-b">
+                <div className="font-semibold truncate pr-3 text-sm sm:text-base">{activeLesson?.title || "Просмотр урока"}</div>
                 <button
                   type="button"
                   onClick={closePreview}
@@ -1141,7 +1153,7 @@ export function CoursePage() {
                 </button>
               </div>
 
-              <div className="relative bg-gray-950">
+              <div className="relative bg-gray-950 flex-1 min-h-0">
                 <div className="relative w-full" style={{ paddingBottom: "56.25%" }}>
                   {/* VIDEO */}
                   {(() => {
@@ -1213,7 +1225,7 @@ export function CoursePage() {
 
                   {/* ✅ BUTTON: включить звук */}
                   {!videoError && isVideoReady && isMuted && (
-                    <div className="absolute z-30 left-4 bottom-4">
+                    <div className="absolute z-30 left-3 sm:left-4 bottom-3 sm:bottom-4">
                       <Button onClick={enableSound} className="gap-2">
                         <Volume2 className="w-4 h-4" />
                         Включить звук
@@ -1244,7 +1256,7 @@ export function CoursePage() {
 
           {/* 2) MODAL: PAYWALL */}
           {!videoError && isPaywallOpen && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center px-4" role="dialog" aria-modal="true">
+            <div className="fixed inset-0 z-[60] flex items-center justify-center px-3 sm:px-4 py-6" role="dialog" aria-modal="true">
               <div
                 className="absolute inset-0 bg-black/60"
                 onClick={closePreview}
@@ -1253,10 +1265,10 @@ export function CoursePage() {
                 aria-label="Закрыть"
               />
 
-              <div className="relative z-10 w-full max-w-md bg-white rounded-2xl p-6 shadow-2xl border border-white/10">
+              <div className="relative z-10 w-full max-w-md bg-white rounded-xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl border border-white/10 max-h-[92vh] overflow-y-auto">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-xl font-semibold text-gray-900">Доступ ограничен</div>
+                    <div className="text-lg sm:text-xl font-semibold text-gray-900">Доступ ограничен</div>
                   </div>
 
                   <button
@@ -1278,11 +1290,12 @@ export function CoursePage() {
                   </div>
                 </div>
 
-                <div className="text-gray-900 mt-5 grid grid-cols-2 gap-3">
-                  <Button variant="outline" onClick={closePreview}>
+                <div className="text-gray-900 mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Button variant="outline" onClick={closePreview} className="w-full">
                     Закрыть
                   </Button>
                   <Button
+                    className="w-full"
                     onClick={() => {
                       closePreview();
                       setTimeout(() => scrollToTariffs(), 120);
