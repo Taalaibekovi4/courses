@@ -55,7 +55,6 @@ function isDirectVideoUrl(input) {
   if (v.startsWith("blob:")) return true;
   if (v.startsWith("/media/") || v.includes("/media/")) return true;
   if (v.startsWith("http://") || v.startsWith("https://")) {
-    // если это прямая ссылка на файл
     return (
       v.endsWith(".mp4") ||
       v.endsWith(".webm") ||
@@ -153,8 +152,9 @@ function buildYouTubeEmbedUrl({ videoId, rawUrl }) {
 
 function statusBadge(status) {
   const s = String(status || "").toLowerCase();
-  if (s === "accepted")
+  if (s === "accepted") {
     return <Badge className="bg-green-600 text-white border-transparent">Принято</Badge>;
+  }
   if (s === "examination") return <Badge variant="outline">На проверке</Badge>;
   if (s === "rework") return <Badge variant="secondary">На доработку</Badge>;
   if (s === "declined") return <Badge variant="destructive">Отклонено</Badge>;
@@ -171,6 +171,9 @@ function LessonStatusIcon({ status }) {
   return <PlayCircle className="w-5 h-5 text-gray-400 flex-shrink-0" />;
 }
 
+/* =========================
+   ✅ ВЕРХ НЕ ТРОГАЕМ: как было раньше
+   ========================= */
 function DashNavInline({ title }) {
   const items = [
     { to: "/dashboard?tab=courses", label: "Мои курсы" },
@@ -259,14 +262,14 @@ function Bubble({ side = "left", title, meta, children }) {
     <div className={`flex ${isLeft ? "justify-start" : "justify-end"}`}>
       <div
         className={[
-          "max-w-[860px] w-full md:w-[85%] rounded-2xl border shadow-sm",
+          "max-w-[860px] w-full sm:w-[92%] md:w-[85%] rounded-2xl border shadow-sm overflow-hidden",
           isLeft ? "bg-white" : "bg-blue-50",
         ].join(" ")}
       >
-        <div className="px-4 py-3 border-b flex items-start justify-between gap-3">
+        <div className="px-4 py-3 border-b flex items-start justify-between gap-3 min-w-0">
           <div className="min-w-0">
             <div className="font-semibold text-sm truncate">{title}</div>
-            {meta ? <div className="text-xs text-gray-500 mt-0.5">{meta}</div> : null}
+            {meta ? <div className="text-xs text-gray-500 mt-0.5 truncate">{meta}</div> : null}
           </div>
         </div>
         <div className="px-4 py-3">{children}</div>
@@ -405,9 +408,6 @@ export function StudentCoursePage() {
     [data.myHomeworks]
   );
 
-  /* =========================
-     ✅ Все версии ДЗ по уроку (для одного блока)
-     ========================= */
   const myHwListForLesson = useMemo(() => {
     if (!currentLesson) return [];
     const lid = getLessonId(currentLesson);
@@ -416,7 +416,7 @@ export function StudentCoursePage() {
     return myHomeworks
       .filter((hw) => getHwCourseId(hw) === cid && getHwLessonId(hw) === lid)
       .slice()
-      .sort((a, b) => new Date(getHwDate(a) || 0) - new Date(getHwDate(b) || 0)); // старые -> новые
+      .sort((a, b) => new Date(getHwDate(a) || 0) - new Date(getHwDate(b) || 0));
   }, [myHomeworks, currentLesson, courseId]);
 
   const lastHw = myHwListForLesson[myHwListForLesson.length - 1] || null;
@@ -459,17 +459,12 @@ export function StudentCoursePage() {
   const isAccepted = hwStatus === "accepted";
   const hasHw = !!lastHw?.id;
 
-  // ✅ Можно редактировать всегда, пока не принято
   const canEdit = !!currentLesson && !isAccepted;
 
-  // ✅ режим отправки:
-  // - нет ДЗ -> create
-  // - rework/declined -> create new version
-  // - examination -> update same (студент может исправлять сколько угодно до проверки)
   const submitMode = useMemo(() => {
     if (!hasHw) return "create";
     if (hwStatus === "rework" || hwStatus === "declined") return "create_new_version";
-    return "update_current"; // examination / empty / sent
+    return "update_current";
   }, [hasHw, hwStatus]);
 
   const actionLabel = useMemo(() => {
@@ -554,7 +549,6 @@ export function StudentCoursePage() {
     }
 
     if (ytId) {
-      // ✅ FIX: youtube.com + si + referrerPolicy (часто убирает 153)
       const src = buildYouTubeEmbedUrl({ videoId: ytId, rawUrl: rawAbs || raw });
 
       return (
@@ -578,7 +572,7 @@ export function StudentCoursePage() {
         controls
         playsInline
         preload="metadata"
-        className="w-full h-full object-cover bg-black"
+        className="w-full h-full object-contain bg-black"
       />
     );
   }, [
@@ -610,7 +604,6 @@ export function StudentCoursePage() {
     }
 
     const lid = getLessonId(currentLesson);
-
     const homeworkIdToSend = submitMode === "update_current" ? lastHw?.id : null;
 
     const res = await data.submitHomework?.({
@@ -633,18 +626,20 @@ export function StudentCoursePage() {
 
   if (!course) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="container mx-auto px-4 py-12">
+      <div className="min-h-[100dvh] w-full bg-gray-50 overflow-x-hidden">
+        <div className="w-full max-w-6xl mx-auto px-3 sm:px-4 py-8">
           <DashNavInline title="Раздел: Мои курсы → Курс" />
           <Card>
             <CardContent className="py-12 text-center">
               <p className="text-gray-600">У вас нет доступа к этому курсу.</p>
               <div className="mt-4 flex gap-3 justify-center flex-wrap">
                 <Link to="/dashboard?tab=activate">
-                  <Button>Взять доступ</Button>
+                  <Button className="w-full sm:w-auto">Взять доступ</Button>
                 </Link>
                 <Link to="/dashboard?tab=courses">
-                  <Button variant="outline">Назад</Button>
+                  <Button variant="outline" className="w-full sm:w-auto">
+                    Назад
+                  </Button>
                 </Link>
               </div>
             </CardContent>
@@ -656,7 +651,6 @@ export function StudentCoursePage() {
 
   const courseTitle = course?.title || course?.name || course?.access?.course_title || "Курс";
 
-  // ✅ материалы ДЗ: ловим разные ключи (чтобы студент всегда видел файл)
   const hwDesc =
     currentLesson?.homework_description ??
     currentLesson?.homeworkDescription ??
@@ -674,27 +668,32 @@ export function StudentCoursePage() {
     "";
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="container mx-auto px-4 py-8">
+    <div className="min-h-[100dvh] w-full bg-gray-50 overflow-x-hidden">
+      <div className="w-full max-w-6xl mx-auto px-3 sm:px-4 py-6 sm:py-8">
         <DashNavInline title="Раздел: Мои курсы → Курс" />
 
         <div className="mb-6">
-          <h1 className="text-3xl mb-2">{courseTitle}</h1>
+          <h1 className="text-2xl sm:text-3xl mb-2 break-words">{courseTitle}</h1>
           {course?.access?.remaining_videos != null ? (
-            <p className="text-gray-600">
+            <p className="text-sm sm:text-base text-gray-600">
               Осталось открытий видео: <span className="font-medium">{course.access.remaining_videos}</span>
             </p>
           ) : (
-            <p className="text-gray-600">Курс</p>
+            <p className="text-sm sm:text-base text-gray-600">Курс</p>
           )}
         </div>
 
-        <div className={cameFromHomework ? "grid lg:grid-cols-1 gap-6" : "grid lg:grid-cols-3 gap-6"}>
+        <div
+          className={[
+            "grid gap-4 sm:gap-6",
+            cameFromHomework ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-3",
+          ].join(" ")}
+        >
           {!cameFromHomework ? (
             <div className="lg:col-span-1">
               <Card>
                 <CardHeader>
-                  <CardTitle>Уроки курса</CardTitle>
+                  <CardTitle className="text-lg sm:text-xl">Уроки курса</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {lessons.length === 0 ? (
@@ -714,18 +713,18 @@ export function StudentCoursePage() {
                             key={id}
                             onClick={() => setSelectedLessonId(id)}
                             className={[
-                              "w-full text-left p-3 rounded-lg transition border",
+                              "w-full text-left p-3 rounded-lg transition border overflow-hidden",
                               active ? "bg-blue-100 border-blue-600" : "hover:bg-gray-100 border-gray-200",
                             ].join(" ")}
                             type="button"
                           >
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
                               <LessonStatusIcon status={st} />
                               <div className="flex-1 min-w-0">
                                 <p className="font-medium truncate">{lesson?.title || `Урок ${idx + 1}`}</p>
                                 <p className="text-xs text-gray-600 truncate">{opened ? "Открыт" : "Не открыт"}</p>
                               </div>
-                              {!opened ? <Lock className="w-4 h-4 text-gray-500" /> : null}
+                              {!opened ? <Lock className="w-4 h-4 text-gray-500 flex-shrink-0" /> : null}
                             </div>
                           </button>
                         );
@@ -737,7 +736,7 @@ export function StudentCoursePage() {
             </div>
           ) : null}
 
-          <div className={cameFromHomework ? "space-y-6" : "lg:col-span-2 space-y-6"}>
+          <div className={cameFromHomework ? "space-y-4 sm:space-y-6" : "lg:col-span-2 space-y-4 sm:space-y-6"}>
             {!currentLesson ? (
               <Card>
                 <CardContent className="py-12 text-center">
@@ -747,12 +746,12 @@ export function StudentCoursePage() {
             ) : (
               <>
                 <Card>
-                  <CardHeader className="flex-row items-start justify-between">
-                    <CardTitle className="min-w-0">{currentLesson?.title || "Урок"}</CardTitle>
-                    {lastHw?.status ? statusBadge(getHwStatus(lastHw)) : null}
+                  <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <CardTitle className="min-w-0 break-words">{currentLesson?.title || "Урок"}</CardTitle>
+                    <div className="flex-shrink-0">{lastHw?.status ? statusBadge(getHwStatus(lastHw)) : null}</div>
                   </CardHeader>
                   <CardContent>
-                    <div className="aspect-video bg-black rounded-lg overflow-hidden">{renderVideo()}</div>
+                    <div className="aspect-video bg-black rounded-xl overflow-hidden">{renderVideo()}</div>
 
                     {lessonOpenedForUI && !openedLesson ? (
                       <div className="mt-3 text-xs text-gray-500">
@@ -764,15 +763,14 @@ export function StudentCoursePage() {
 
                 <Card>
                   <CardHeader>
-                    <CardTitle>Домашнее задание</CardTitle>
+                    <CardTitle className="text-lg sm:text-xl">Домашнее задание</CardTitle>
                   </CardHeader>
 
                   <CardContent>
-                    {/* ✅ Материалы ДЗ от преподавателя */}
                     {hwDesc ? (
                       <div className="mb-4 p-3 bg-gray-50 rounded border border-gray-200">
                         <div className="text-sm font-medium mb-1">Задание от преподавателя:</div>
-                        <div className="text-sm whitespace-pre-wrap text-gray-800">{hwDesc}</div>
+                        <div className="text-sm whitespace-pre-wrap text-gray-800 break-words">{hwDesc}</div>
                       </div>
                     ) : null}
 
@@ -789,11 +787,10 @@ export function StudentCoursePage() {
                       </div>
                     ) : null}
 
-                    {/* ✅ Один блок (thread) вместо дублей */}
                     <div className="mb-6">
-                      <div className="flex items-center justify-between gap-3 mb-3">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
                         <div className="font-semibold">Диалог по ДЗ</div>
-                        {lastHw?.status ? statusBadge(getHwStatus(lastHw)) : null}
+                        <div className="flex-shrink-0">{lastHw?.status ? statusBadge(getHwStatus(lastHw)) : null}</div>
                       </div>
 
                       {myHwListForLesson.length === 0 ? (
@@ -828,7 +825,9 @@ export function StudentCoursePage() {
                                     title="Преподаватель"
                                     meta={st === "accepted" ? "Результат: принято" : "Комментарий"}
                                   >
-                                    <div className="text-sm whitespace-pre-wrap">{getHwTeacherComment(hw)}</div>
+                                    <div className="text-sm whitespace-pre-wrap break-words">
+                                      {getHwTeacherComment(hw)}
+                                    </div>
                                   </Bubble>
                                 ) : null}
                               </div>
@@ -838,17 +837,18 @@ export function StudentCoursePage() {
                       )}
                     </div>
 
-                    {/* ✅ Редактор ответа */}
                     <div className="rounded-2xl border bg-white p-4">
-                      <div className="flex items-center justify-between gap-3 mb-3">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
                         <div className="font-semibold">Ваш ответ</div>
-                        {isAccepted ? (
-                          <Badge className="bg-green-600 text-white border-transparent">Закрыто</Badge>
-                        ) : submitMode === "update_current" ? (
-                          <Badge variant="secondary">Можно редактировать до проверки</Badge>
-                        ) : (
-                          <Badge variant="outline">Новая отправка</Badge>
-                        )}
+                        <div className="flex-shrink-0">
+                          {isAccepted ? (
+                            <Badge className="bg-green-600 text-white border-transparent">Закрыто</Badge>
+                          ) : submitMode === "update_current" ? (
+                            <Badge variant="secondary">Можно редактировать до проверки</Badge>
+                          ) : (
+                            <Badge variant="outline">Новая отправка</Badge>
+                          )}
+                        </div>
                       </div>
 
                       <Textarea
@@ -859,8 +859,9 @@ export function StudentCoursePage() {
                         disabled={!canEdit || !!data.loading?.submitHomework}
                       />
 
-                      <div className="mt-4 flex flex-col md:flex-row gap-3">
-                        <div className="flex gap-2 w-full">
+                      {/* ✅ FIX 320px: ссылка + кнопка не ломают ширину */}
+                      <div className="mt-4">
+                        <div className="flex flex-col sm:flex-row gap-2 w-full">
                           <Input
                             placeholder="Ссылка (GitHub, Google Drive...)"
                             value={linkInput}
@@ -872,6 +873,7 @@ export function StudentCoursePage() {
                             variant="outline"
                             onClick={addLinkIntoHomeworkText}
                             disabled={!canEdit || !!data.loading?.submitHomework}
+                            className="w-full sm:w-auto"
                           >
                             <LinkIcon className="w-4 h-4 mr-2" />
                             Добавить
@@ -881,12 +883,16 @@ export function StudentCoursePage() {
 
                       <div className="mt-4 flex flex-wrap gap-3">
                         {isAccepted ? (
-                          <Button disabled className="bg-green-600 hover:bg-green-600">
+                          <Button disabled className="bg-green-600 hover:bg-green-600 w-full sm:w-auto">
                             <CheckCircle className="w-4 h-4 mr-2" />
                             Принято — отправка закрыта
                           </Button>
                         ) : (
-                          <Button onClick={handleSendHomework} disabled={!canEdit || !!data.loading?.submitHomework}>
+                          <Button
+                            onClick={handleSendHomework}
+                            disabled={!canEdit || !!data.loading?.submitHomework}
+                            className="w-full sm:w-auto"
+                          >
                             <Send className="w-4 h-4 mr-2" />
                             {data.loading?.submitHomework ? "Отправка..." : actionLabel}
                           </Button>
